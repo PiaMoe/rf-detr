@@ -64,6 +64,11 @@ class LWDETR(nn.Module):
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+        self.dist_embed = nn.Linear(hidden_dim, 1)
+        self.head_embed = nn.Linear(hidden_dim, 2)
+        # TODO PIA: test if MLP makes a difference for distance & heading prediction
+        #self.dist_embed = MLP(hidden_dim, hidden_dim, 1, 3)  # Distance prediction head
+        #self.head_embed = MLP(hidden_dim, hidden_dim, 2, 3)  # Heading prediction head
 
         query_dim=4
         self.refpoint_embed = nn.Embedding(num_queries * group_detr, query_dim)
@@ -143,6 +148,7 @@ class LWDETR(nn.Module):
         """
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
+        # pos encoding added via Joiner (see __init__)
         features, poss = self.backbone(samples)
 
         srcs = []
@@ -153,6 +159,7 @@ class LWDETR(nn.Module):
             masks.append(mask)
             assert mask is not None
 
+        # how many groups of queriy embeddings to use
         if self.training:
             refpoint_embed_weight = self.refpoint_embed.weight
             query_feat_weight = self.query_feat.weight
@@ -161,8 +168,12 @@ class LWDETR(nn.Module):
             refpoint_embed_weight = self.refpoint_embed.weight[:self.num_queries]
             query_feat_weight = self.query_feat.weight[:self.num_queries]
 
+        # transformer forward
+        # hs = decoder output, ref_unsigmoid = reference points before sigmoid, hs_enc = encoder output, ref_enc = reference points for encoder output
         hs, ref_unsigmoid, hs_enc, ref_enc = self.transformer(
             srcs, masks, poss, refpoint_embed_weight, query_feat_weight)
+
+        # TODO PIA: use hs to predict distance & heading
 
         if self.bbox_reparam:
             outputs_coord_delta = self.bbox_embed(hs)
@@ -175,8 +186,11 @@ class LWDETR(nn.Module):
             outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
 
         outputs_class = self.class_embed(hs)
+        output_distance = self.dist_embed(hs)
+        output_heading = self.head_embed(hs)
 
-        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
+        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1], 'pred_distance': output_distance[-1],
+               'pred_heading': output_heading[-1]}
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
 
@@ -403,6 +417,14 @@ class SetCriterion(nn.Module):
         losses['loss_giou'] = loss_giou.sum() / num_boxes
         return losses
 
+    def loss_distance(self, outputs, targets):
+        # TODO PIA: implement distance loss
+        pass
+
+    def loss_heading(self, outputs, targets):
+        # TODO PIA: implement heading loss
+        pass
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -420,6 +442,8 @@ class SetCriterion(nn.Module):
             'labels': self.loss_labels,
             'cardinality': self.loss_cardinality,
             'boxes': self.loss_boxes,
+            'distance': self.loss_distance,
+            'heading': self.loss_heading
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -432,7 +456,7 @@ class SetCriterion(nn.Module):
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
         group_detr = self.group_detr if self.training else 1
-        outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
+        outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'pred_distance' and k != 'pred_heading'}
 
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets, group_detr=group_detr)
@@ -475,6 +499,8 @@ class SetCriterion(nn.Module):
                 l_dict = self.get_loss(loss, enc_outputs, targets, indices, num_boxes, **kwargs)
                 l_dict = {k + f'_enc': v for k, v in l_dict.items()}
                 losses.update(l_dict)
+
+        # TODO PIA: add losses for distance & heading
 
         return losses
 
@@ -643,6 +669,8 @@ def build_criterion_and_postprocessors(args):
     matcher = build_matcher(args)
     weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef}
     weight_dict['loss_giou'] = args.giou_loss_coef
+    weight_dict['loss_distance'] = args.dist_loss_coef
+    weight_dict['loss_heading'] = args.head_loss_coef
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}
@@ -652,7 +680,7 @@ def build_criterion_and_postprocessors(args):
             aux_weight_dict.update({k + f'_enc': v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
 
-    losses = ['labels', 'boxes', 'cardinality']
+    losses = ['labels', 'boxes', 'cardinality', 'distance', 'heading']
 
     try:
         sum_group_losses = args.sum_group_losses

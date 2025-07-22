@@ -72,6 +72,7 @@ def download_pretrain_weights(pretrain_weights: str, redownload=False):
 
 class Model:
     def __init__(self, **kwargs):
+        # args come from config file
         args = populate_args(**kwargs)
         self.resolution = args.resolution
         self.model = build_model(args)
@@ -599,6 +600,8 @@ if __name__ == '__main__':
             "cls_loss_coef",
             "bbox_loss_coef",
             "giou_loss_coef",
+            "dist_loss_coef",
+            "head_loss_coef",
             "focal_alpha",
             "aux_loss",
             "sum_group_losses",
@@ -736,6 +739,8 @@ def get_args_parser():
     parser.add_argument('--cls_loss_coef', default=2, type=float)
     parser.add_argument('--bbox_loss_coef', default=5, type=float)
     parser.add_argument('--giou_loss_coef', default=2, type=float)
+    parser.add_argument('--dist_loss_coef', default=1, type=float)
+    parser.add_argument('--head_loss_coef', default=1, type=float)
     parser.add_argument('--focal_alpha', default=0.25, type=float)
     
     # Loss
@@ -895,6 +900,8 @@ def populate_args(
     cls_loss_coef=2,
     bbox_loss_coef=5,
     giou_loss_coef=2,
+    dist_loss_coef=1,
+    head_loss_coef=1,
     focal_alpha=0.25,
     aux_loss=True,
     sum_group_losses=False,
@@ -1005,6 +1012,8 @@ def populate_args(
         cls_loss_coef=cls_loss_coef,
         bbox_loss_coef=bbox_loss_coef,
         giou_loss_coef=giou_loss_coef,
+        dist_loss_coef=dist_loss_coef,
+        head_loss_coef=head_loss_coef,
         focal_alpha=focal_alpha,
         aux_loss=aux_loss,
         sum_group_losses=sum_group_losses,
