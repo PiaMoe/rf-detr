@@ -467,6 +467,9 @@ class SetCriterion(nn.Module):
             - num_boxes: total number of matched boxes (used for normalization)
         """
         assert 'pred_heading' in outputs
+        if len(indices[0][0]) == 0:
+            # no objects matched (no indices)
+            return {"loss_heading": torch.tensor(0.0, device=outputs["pred_boxes"].device)}
         pred_heading = outputs['pred_heading']  # shape: [batch_size, num_queries, 2]
         pred_cos = pred_heading[..., 0]  # [batch_size, num_queries]
         pred_sin = pred_heading[..., 1]  # [batch_size, num_queries]

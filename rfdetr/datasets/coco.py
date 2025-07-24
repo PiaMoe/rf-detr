@@ -238,9 +238,9 @@ def build_roboflow(image_set, args, resolution):
     assert root.exists(), f'provided Roboflow path {root} does not exist'
     mode = 'instances'
     PATHS = {
-        "train": (root / "train", root / "train" / "train.json"),
-        "val": (root /  "val", root / "val" / "val.json"),
-        "test": (root / "test", root / "test" / "test.json"),
+        "train": (root / "train" / "images", root / "train" / "train.json"),
+        "val": (root /  "val" / "images", root / "val" / "val.json"),
+        "test": (root / "test" / "images", root / "test" / "test.json"),
     }
     
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
