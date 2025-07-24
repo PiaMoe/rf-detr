@@ -603,6 +603,7 @@ if __name__ == '__main__':
             "dist_loss_coef",
             "head_loss_coef",
             "focal_alpha",
+            "max_distance",
             "aux_loss",
             "sum_group_losses",
             "use_varifocal_loss",
@@ -744,6 +745,7 @@ def get_args_parser():
     parser.add_argument('--focal_alpha', default=0.25, type=float)
     
     # Loss
+    parser.add_argument('--max_distance', default=1000.0, type=float,)
     parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
                         help="Disables auxiliary decoding losses (loss at each layer)")
     parser.add_argument('--sum_group_losses', action='store_true',
@@ -903,6 +905,7 @@ def populate_args(
     dist_loss_coef=1,
     head_loss_coef=1,
     focal_alpha=0.25,
+    max_distance=1000.0,
     aux_loss=True,
     sum_group_losses=False,
     use_varifocal_loss=False,
@@ -1015,6 +1018,7 @@ def populate_args(
         dist_loss_coef=dist_loss_coef,
         head_loss_coef=head_loss_coef,
         focal_alpha=focal_alpha,
+        max_distance=max_distance,
         aux_loss=aux_loss,
         sum_group_losses=sum_group_losses,
         use_varifocal_loss=use_varifocal_loss,

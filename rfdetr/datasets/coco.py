@@ -86,6 +86,12 @@ class ConvertCoco(object):
         classes = [obj["category_id"] for obj in anno]
         classes = torch.tensor(classes, dtype=torch.int64)
 
+        distance = [obj["distance"] if "distance" in obj else -1 for obj in anno]
+        distance = torch.tensor(distance, dtype=torch.float32)
+
+        heading = [obj["heading"] if "heading" in obj else [0, 0] for obj in anno]
+        heading = torch.tensor(heading, dtype=torch.float32)
+
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
         boxes = boxes[keep]
         classes = classes[keep]
@@ -94,6 +100,8 @@ class ConvertCoco(object):
         target["boxes"] = boxes
         target["labels"] = classes
         target["image_id"] = image_id
+        target["distance"] = distance
+        target["heading"] = heading
 
         # for conversion to coco api
         area = torch.tensor([obj["area"] for obj in anno])

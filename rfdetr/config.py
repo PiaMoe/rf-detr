@@ -30,6 +30,8 @@ class ModelConfig(BaseModel):
     resolution: int = 560
     group_detr: int = 13
     gradient_checkpointing: bool = False
+    max_distance: float = 1000.0
+    aux_loss: bool = False
     # TODO PIA: try different values for dist loss und head loss coefficients
 
 class RFDETRBaseConfig(ModelConfig):

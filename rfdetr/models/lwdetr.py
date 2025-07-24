@@ -104,6 +104,10 @@ class LWDETR(nn.Module):
                 [copy.deepcopy(self.bbox_embed) for _ in range(group_detr)])
             self.transformer.enc_out_class_embed = nn.ModuleList(
                 [copy.deepcopy(self.class_embed) for _ in range(group_detr)])
+            self.transformer.enc_out_dist_embed = nn.ModuleList(
+                [copy.deepcopy(self.dist_embed) for _ in range(group_detr)])
+            self.transformer.enc_out_head_embed = nn.ModuleList(
+                [copy.deepcopy(self.head_embed) for _ in range(group_detr)])
 
         self._export = False
 
@@ -187,6 +191,7 @@ class LWDETR(nn.Module):
 
         outputs_class = self.class_embed(hs)
         output_distance = self.dist_embed(hs)
+        output_distance = output_distance.sigmoid()  # Ensure distance is in [0, 1]
         output_heading = self.head_embed(hs)
 
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1], 'pred_distance': output_distance[-1],
@@ -198,11 +203,20 @@ class LWDETR(nn.Module):
             group_detr = self.group_detr if self.training else 1
             hs_enc_list = hs_enc.chunk(group_detr, dim=1)
             cls_enc = []
+            dist_enc = []
+            head_enc = []
             for g_idx in range(group_detr):
                 cls_enc_gidx = self.transformer.enc_out_class_embed[g_idx](hs_enc_list[g_idx])
+                dist_enc_gidx = self.transformer.enc_out_dist_embed[g_idx](hs_enc_list[g_idx])
+                head_enc_gidx = self.transformer.enc_out_head_embed[g_idx](hs_enc_list[g_idx])
                 cls_enc.append(cls_enc_gidx)
+                dist_enc.append(dist_enc_gidx)
+                head_enc.append(head_enc_gidx)
             cls_enc = torch.cat(cls_enc, dim=1)
-            out['enc_outputs'] = {'pred_logits': cls_enc, 'pred_boxes': ref_enc}
+            dist_enc = torch.cat(dist_enc, dim=1)
+            head_enc = torch.cat(head_enc, dim=1)
+            out['enc_outputs'] = {'pred_logits': cls_enc, 'pred_boxes': ref_enc,
+                                  'pred_distance': dist_enc, 'pred_heading': head_enc}
         return out
 
     def forward_export(self, tensors):
@@ -263,11 +277,13 @@ class SetCriterion(nn.Module):
                  weight_dict,
                  focal_alpha,
                  losses,
+                 max_distance,
                  group_detr=1,
                  sum_group_losses=False,
                  use_varifocal_loss=False,
                  use_position_supervised_loss=False,
-                 ia_bce_loss=False,):
+                 ia_bce_loss=False,
+                 ):
         """ Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -288,6 +304,7 @@ class SetCriterion(nn.Module):
         self.use_varifocal_loss = use_varifocal_loss
         self.use_position_supervised_loss = use_position_supervised_loss
         self.ia_bce_loss = ia_bce_loss
+        self.max_distance = max_distance
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss)
@@ -417,13 +434,68 @@ class SetCriterion(nn.Module):
         losses['loss_giou'] = loss_giou.sum() / num_boxes
         return losses
 
-    def loss_distance(self, outputs, targets):
-        # TODO PIA: implement distance loss
-        pass
+    def loss_distance(self, outputs, targets, indices, num_boxes):
+        """
+        Compute the L1 loss for the predicted distances.
+        Assumes that each target dict contains a 'distance' tensor with shape [nb_target_boxes]
+        and -1 as invalid marker (e.g. for unlabeled distances).
+        """
+        assert 'pred_distance' in outputs
+        idx = self._get_src_permutation_idx(indices)
+        src_distance = outputs['pred_distance'][idx]  # shape: [num_matched_boxes]
+        target_distance = torch.cat([t['distance'][i] for t, (_, i) in zip(targets, indices)], dim=0).unsqueeze(1)
 
-    def loss_heading(self, outputs, targets):
-        # TODO PIA: implement heading loss
-        pass
+        valid_mask = target_distance != -1
+        src_distance = src_distance[valid_mask]
+        target_distance = target_distance[valid_mask]
+
+        # Normalize target distance to [0, 1] range (linear normalization strategy)
+        target_distance = target_distance / self.max_distance
+
+        loss_dist = F.l1_loss(src_distance, target_distance, reduction='none')
+        losses = {'loss_distance': loss_dist.sum() / num_boxes}
+        return losses
+
+
+    def loss_heading(self, outputs, targets, indices, num_boxes):
+        """
+        Compute the cosine loss for heading prediction.
+        Inputs:
+            - outputs['pred_heading']: tuple of (pred_cos, pred_sin), each of shape [batch_size, num_queries]
+            - targets: list of dicts, each with keys 'heading' → tuple of (cos, sin), each of shape [num_boxes_i]
+            - indices: list of tuples (index_i, matched_idx_i), as returned by matcher
+            - num_boxes: total number of matched boxes (used for normalization)
+        """
+        assert 'pred_heading' in outputs
+        pred_heading = outputs['pred_heading']  # shape: [batch_size, num_queries, 2]
+        pred_cos = pred_heading[..., 0]  # [batch_size, num_queries]
+        pred_sin = pred_heading[..., 1]  # [batch_size, num_queries]
+
+        idx = self._get_src_permutation_idx(indices)
+        pred_cos = pred_cos[idx]  # [num_matched_boxes]
+        pred_sin = pred_sin[idx]  # [num_matched_boxes]
+        pred_head_vec = torch.stack([pred_cos, pred_sin], dim=-1).unsqueeze(1)   # shape: [num_matched_boxes, 1, 2]
+
+        # Gather target cos/sin for matched boxes
+        target_heading = torch.cat([t['heading'][i] for t, (_, i) in zip(targets, indices)], dim=0).unsqueeze(1)
+        target_cos = target_heading[..., 0]  # [num_matched_boxes]
+        target_sin = target_heading[..., 1]  # [num_matched_boxes]
+        target_head_vec = torch.stack([target_cos, target_sin], dim=-1)
+
+        valid_mask = target_head_vec.norm(dim=-1) > 1e-6
+        pred_head = pred_head_vec[valid_mask]
+        target_head = target_head_vec[valid_mask]
+
+        # Normalize both to unit vectors
+        pred_unit = F.normalize(pred_head, dim=-1)
+        target_unit = F.normalize(target_head, dim=-1)
+
+        cos_sim = (pred_unit * target_unit).sum(dim=-1)
+        L = 1.0 - cos_sim  # 1 - cos(Δθ), small when headings are similar
+
+        losses = {'loss_heading': L.sum() / num_boxes}
+        return losses
+
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
@@ -499,8 +571,6 @@ class SetCriterion(nn.Module):
                 l_dict = self.get_loss(loss, enc_outputs, targets, indices, num_boxes, **kwargs)
                 l_dict = {k + f'_enc': v for k, v in l_dict.items()}
                 losses.update(l_dict)
-
-        # TODO PIA: add losses for distance & heading
 
         return losses
 
@@ -687,7 +757,7 @@ def build_criterion_and_postprocessors(args):
     except:
         sum_group_losses = False
     criterion = SetCriterion(args.num_classes + 1, matcher=matcher, weight_dict=weight_dict,
-                             focal_alpha=args.focal_alpha, losses=losses, 
+                             focal_alpha=args.focal_alpha, losses=losses, max_distance=args.max_distance,
                              group_detr=args.group_detr, sum_group_losses=sum_group_losses,
                              use_varifocal_loss = args.use_varifocal_loss,
                              use_position_supervised_loss=args.use_position_supervised_loss,
