@@ -224,9 +224,9 @@ class MetricsWandBSink:
             log_dict["Loss/Test/Heading"] = values['test_loss_heading']
 
         if 'distance_error' in values:
-            log_dict["Metrics/abs_distance_err"] = values['distance_error']
+            log_dict["Metrics/abs_distance_err"] = values['test_abs_distance_error']
         if 'heading_score' in values:
-            log_dict["Metrics/abs_heading_err"] = values['heading_score']
+            log_dict["Metrics/abs_heading_err"] = values['test_abs_heading_diff']
 
         if 'test_coco_eval_bbox' in values:
             coco_eval = values['test_coco_eval_bbox']
@@ -257,5 +257,5 @@ class MetricsWandBSink:
     def close(self):
         if not wandb or not self.run:
             return
-            
+
         self.run.finish()

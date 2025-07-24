@@ -28,8 +28,8 @@ from torch import nn
 
 from rfdetr.util import box_ops
 from rfdetr.util.misc import (NestedTensor, nested_tensor_from_tensor_list,
-                       accuracy, get_world_size,
-                       is_dist_avail_and_initialized)
+                              accuracy, get_world_size,
+                              is_dist_avail_and_initialized)
 
 from rfdetr.models.backbone import build_backbone
 from rfdetr.models.matcher import build_matcher
@@ -125,7 +125,6 @@ class LWDETR(nn.Module):
             del self.transformer.enc_out_class_embed
             self.transformer.add_module("enc_out_class_embed", nn.ModuleList(
                 [copy.deepcopy(self.class_embed) for _ in range(self.group_detr)]))
-
 
     def export(self):
         self._export = True
@@ -318,20 +317,20 @@ class SetCriterion(nn.Module):
 
         if self.ia_bce_loss:
             alpha = self.focal_alpha
-            gamma = 2 
+            gamma = 2
             src_boxes = outputs['pred_boxes'][idx]
             target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
-            iou_targets=torch.diag(box_ops.box_iou(
+            iou_targets = torch.diag(box_ops.box_iou(
                 box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
                 box_ops.box_cxcywh_to_xyxy(target_boxes))[0])
             pos_ious = iou_targets.clone().detach()
             prob = src_logits.sigmoid()
-            #init positive weights and negative weights
+            # init positive weights and negative weights
             pos_weights = torch.zeros_like(src_logits)
-            neg_weights =  prob ** gamma
+            neg_weights = prob ** gamma
 
-            pos_ind=[id for id in idx]
+            pos_ind = [id for id in idx]
             pos_ind.append(target_classes_o)
 
             t = prob[pos_ind].pow(alpha) * pos_ious.pow(1 - alpha)
@@ -348,50 +347,55 @@ class SetCriterion(nn.Module):
             src_boxes = outputs['pred_boxes'][idx]
             target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
-            iou_targets=torch.diag(box_ops.box_iou(
+            iou_targets = torch.diag(box_ops.box_iou(
                 box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
                 box_ops.box_cxcywh_to_xyxy(target_boxes))[0])
             pos_ious = iou_targets.clone().detach()
             # pos_ious_func = pos_ious ** 2
             pos_ious_func = pos_ious
 
-            cls_iou_func_targets = torch.zeros((src_logits.shape[0], src_logits.shape[1],self.num_classes),
-                                        dtype=src_logits.dtype, device=src_logits.device)
+            cls_iou_func_targets = torch.zeros((src_logits.shape[0], src_logits.shape[1], self.num_classes),
+                                               dtype=src_logits.dtype, device=src_logits.device)
 
-            pos_ind=[id for id in idx]
+            pos_ind = [id for id in idx]
             pos_ind.append(target_classes_o)
             cls_iou_func_targets[pos_ind] = pos_ious_func
             norm_cls_iou_func_targets = cls_iou_func_targets \
-                / (cls_iou_func_targets.view(cls_iou_func_targets.shape[0], -1, 1).amax(1, True) + 1e-8)
-            loss_ce = position_supervised_loss(src_logits, norm_cls_iou_func_targets, num_boxes, alpha=self.focal_alpha, gamma=2) * src_logits.shape[1]
+                                        / (cls_iou_func_targets.view(cls_iou_func_targets.shape[0], -1, 1).amax(1,
+                                                                                                                True) + 1e-8)
+            loss_ce = position_supervised_loss(src_logits, norm_cls_iou_func_targets, num_boxes, alpha=self.focal_alpha,
+                                               gamma=2) * src_logits.shape[1]
 
         elif self.use_varifocal_loss:
             src_boxes = outputs['pred_boxes'][idx]
             target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
-            iou_targets=torch.diag(box_ops.box_iou(
+            iou_targets = torch.diag(box_ops.box_iou(
                 box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
                 box_ops.box_cxcywh_to_xyxy(target_boxes))[0])
             pos_ious = iou_targets.clone().detach()
 
-            cls_iou_targets = torch.zeros((src_logits.shape[0], src_logits.shape[1],self.num_classes),
-                                        dtype=src_logits.dtype, device=src_logits.device)
+            cls_iou_targets = torch.zeros((src_logits.shape[0], src_logits.shape[1], self.num_classes),
+                                          dtype=src_logits.dtype, device=src_logits.device)
 
-            pos_ind=[id for id in idx]
+            pos_ind = [id for id in idx]
             pos_ind.append(target_classes_o)
             cls_iou_targets[pos_ind] = pos_ious
-            loss_ce = sigmoid_varifocal_loss(src_logits, cls_iou_targets, num_boxes, alpha=self.focal_alpha, gamma=2) * src_logits.shape[1]
+            loss_ce = sigmoid_varifocal_loss(src_logits, cls_iou_targets, num_boxes, alpha=self.focal_alpha, gamma=2) * \
+                      src_logits.shape[1]
         else:
             target_classes = torch.full(src_logits.shape[:2], self.num_classes,
                                         dtype=torch.int64, device=src_logits.device)
             target_classes[idx] = target_classes_o
 
-            target_classes_onehot = torch.zeros([src_logits.shape[0], src_logits.shape[1], src_logits.shape[2]+1],
-                                                dtype=src_logits.dtype, layout=src_logits.layout, device=src_logits.device)
+            target_classes_onehot = torch.zeros([src_logits.shape[0], src_logits.shape[1], src_logits.shape[2] + 1],
+                                                dtype=src_logits.dtype, layout=src_logits.layout,
+                                                device=src_logits.device)
             target_classes_onehot.scatter_(2, target_classes.unsqueeze(-1), 1)
 
-            target_classes_onehot = target_classes_onehot[:,:,:-1]
-            loss_ce = sigmoid_focal_loss(src_logits, target_classes_onehot, num_boxes, alpha=self.focal_alpha, gamma=2) * src_logits.shape[1]
+            target_classes_onehot = target_classes_onehot[:, :, :-1]
+            loss_ce = sigmoid_focal_loss(src_logits, target_classes_onehot, num_boxes, alpha=self.focal_alpha,
+                                         gamma=2) * src_logits.shape[1]
         losses = {'loss_ce': loss_ce}
 
         if log:
@@ -450,12 +454,16 @@ class SetCriterion(nn.Module):
         target_distance = target_distance[valid_mask]
 
         # Normalize target distance to [0, 1] range (linear normalization strategy)
-        target_distance = target_distance / self.max_distance
+        target_distance_normalized = target_distance / self.max_distance
+        loss_dist = F.l1_loss(src_distance, target_distance_normalized, reduction='none')
 
-        loss_dist = F.l1_loss(src_distance, target_distance, reduction='none')
-        losses = {'loss_distance': loss_dist.sum() / num_boxes}
+        # compute absolute error for logging
+        src_distance_rescaled = src_distance * self.max_distance
+        abs_err = torch.abs(target_distance - src_distance_rescaled)
+
+        losses = {'loss_distance': loss_dist.sum() / num_boxes,
+                  'abs_distance_error': abs_err.sum() / num_boxes}
         return losses
-
 
     def loss_heading(self, outputs, targets, indices, num_boxes):
         """
@@ -477,7 +485,7 @@ class SetCriterion(nn.Module):
         idx = self._get_src_permutation_idx(indices)
         pred_cos = pred_cos[idx]  # [num_matched_boxes]
         pred_sin = pred_sin[idx]  # [num_matched_boxes]
-        pred_head_vec = torch.stack([pred_cos, pred_sin], dim=-1).unsqueeze(1)   # shape: [num_matched_boxes, 1, 2]
+        pred_head_vec = torch.stack([pred_cos, pred_sin], dim=-1).unsqueeze(1)  # shape: [num_matched_boxes, 1, 2]
 
         # Gather target cos/sin for matched boxes
         target_heading = torch.cat([t['heading'][i] for t, (_, i) in zip(targets, indices)], dim=0).unsqueeze(1)
@@ -494,11 +502,16 @@ class SetCriterion(nn.Module):
         target_unit = F.normalize(target_head, dim=-1)
 
         cos_sim = (pred_unit * target_unit).sum(dim=-1)
-        L = 1.0 - cos_sim  # 1 - cos(Δθ), small when headings are similar
+        cos_sim_loss = 1.0 - cos_sim  # 1 - cos(Δθ), small when headings are similar
 
-        losses = {'loss_heading': L.sum() / num_boxes}
+        # compute absolute difference of heading in degrees for logging
+        pred_head_deg = torch.rad2deg(torch.arctan2(pred_unit[:, 1], pred_unit[:, 0])) % 360
+        target_head_deg = torch.rad2deg(torch.arctan2(target_unit[:, 1], target_unit[:, 0])) % 360
+        abs_diff = torch.abs(pred_head_deg - target_head_deg)
+        abs_error = torch.minimum(abs_diff, 360 - abs_diff)
+
+        losses = {'loss_heading': cos_sim_loss.sum() / num_boxes, 'abs_heading_diff': abs_error.sum() / num_boxes}
         return losses
-
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
@@ -531,7 +544,8 @@ class SetCriterion(nn.Module):
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
         group_detr = self.group_detr if self.training else 1
-        outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'pred_distance' and k != 'pred_heading'}
+        outputs_without_aux = {k: v for k, v in outputs.items() if
+                               k != 'aux_outputs' and k != 'pred_distance' and k != 'pred_heading'}
 
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets, group_detr=group_detr)
@@ -609,8 +623,8 @@ def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: f
 def sigmoid_varifocal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
     prob = inputs.sigmoid()
     focal_weight = targets * (targets > 0.0).float() + \
-            (1 - alpha) * (prob - targets).abs().pow(gamma) * \
-            (targets <= 0.0).float()
+                   (1 - alpha) * (prob - targets).abs().pow(gamma) * \
+                   (targets <= 0.0).float()
     ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
     loss = ce_loss * focal_weight
 
@@ -631,6 +645,7 @@ def position_supervised_loss(inputs, targets, num_boxes, alpha: float = 0.25, ga
 
 class PostProcess(nn.Module):
     """ This module converts the model's output into the format expected by the coco api"""
+
     def __init__(self, num_select=300) -> None:
         super().__init__()
         self.num_select = num_select
@@ -655,7 +670,7 @@ class PostProcess(nn.Module):
         topk_boxes = topk_indexes // out_logits.shape[2]
         labels = topk_indexes % out_logits.shape[2]
         boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
-        boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1,1,4))
+        boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1, 1, 4))
 
         # and from relative [0, 1] to absolute [0, height] coordinates
         img_h, img_w = target_sizes.unbind(1)
@@ -694,7 +709,6 @@ def build_model(args):
     num_classes = args.num_classes + 1
     device = torch.device(args.device)
 
-
     backbone = build_backbone(
         encoder=args.encoder,
         vit_encoder_num_layers=args.vit_encoder_num_layers,
@@ -709,7 +723,9 @@ def build_model(args):
         position_embedding=args.position_embedding,
         freeze_encoder=args.freeze_encoder,
         layer_norm=args.layer_norm,
-        target_shape=args.shape if hasattr(args, 'shape') else (args.resolution, args.resolution) if hasattr(args, 'resolution') else (640, 640),
+        target_shape=args.shape if hasattr(args, 'shape') else (args.resolution, args.resolution) if hasattr(args,
+                                                                                                             'resolution') else (
+        640, 640),
         rms_norm=args.rms_norm,
         backbone_lora=args.backbone_lora,
         force_no_pretrain=args.force_no_pretrain,
@@ -737,6 +753,7 @@ def build_model(args):
     )
     return model
 
+
 def build_criterion_and_postprocessors(args):
     device = torch.device(args.device)
     matcher = build_matcher(args)
@@ -762,7 +779,7 @@ def build_criterion_and_postprocessors(args):
     criterion = SetCriterion(args.num_classes + 1, matcher=matcher, weight_dict=weight_dict,
                              focal_alpha=args.focal_alpha, losses=losses, max_distance=args.max_distance,
                              group_detr=args.group_detr, sum_group_losses=sum_group_losses,
-                             use_varifocal_loss = args.use_varifocal_loss,
+                             use_varifocal_loss=args.use_varifocal_loss,
                              use_position_supervised_loss=args.use_position_supervised_loss,
                              ia_bce_loss=args.ia_bce_loss)
     criterion.to(device)
