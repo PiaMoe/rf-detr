@@ -252,6 +252,8 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
 
     iou_types = tuple(k for k in ("segm", "bbox") if k in postprocessors.keys())
     coco_evaluator = CocoEvaluator(base_ds, iou_types)
+    heading_scores = []
+    distance_errors = []
 
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
@@ -291,6 +293,33 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
         loss_dict_reduced_unscaled = {
             f"{k}_unscaled": v for k, v in loss_dict_reduced.items()
         }
+
+        # compute heading accuracy
+        for i in range(len(targets)):
+            gt = targets[i]["heading"]  # shape: [N, 2]
+            pred = outputs["pred_heading"][i]  # shape: [N, 2]
+            if gt.numel() == 0 or pred.numel() == 0:
+                continue
+
+            head_deg_pred =torch.rad2deg(torch.arctan2(pred[:, 1], pred[:, 0])) % 360
+            head_deg_gt = torch.rad2deg(torch.arctan2(gt[:, 1], gt[:, 0])) % 360
+            abs_diff = torch.abs(head_deg_pred - head_deg_gt)
+            abs_error = torch.minimum(abs_diff, 360 - abs_diff)  # [N]
+            heading_scores.extend(abs_error.cpu().tolist())
+
+        # compute abs distance error
+        for i in range(len(targets)):
+            gt = targets[i]["distance"]  # shape: [N]
+            pred = outputs["pred_distance"][i]  # shape: [N]
+
+            if gt.numel() == 0 or pred.numel() == 0:
+                continue
+
+            rescaled_dist = pred * args.max_distance
+            abs_err = torch.abs(gt - rescaled_dist)
+            distance_errors.extend(abs_err.cpu().tolist())
+
+
         metric_logger.update(
             loss=sum(loss_dict_reduced_scaled.values()),
             **loss_dict_reduced_scaled,
@@ -318,6 +347,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
         coco_evaluator.accumulate()
         coco_evaluator.summarize()
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
     if coco_evaluator is not None:
         results_json = coco_extended_metrics(coco_evaluator.coco_eval["bbox"])
         stats["results_json"] = results_json
@@ -326,4 +356,10 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
 
         if "segm" in postprocessors.keys():
             stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
+
+    if heading_scores:
+        stats["heading_score"] = sum(heading_scores) / len(heading_scores)
+    if distance_errors:
+        stats["distance_error"] = sum(distance_errors) / len(distance_errors)
+
     return stats, coco_evaluator

@@ -207,8 +207,26 @@ class MetricsWandBSink:
 
         if 'train_loss' in values:
             log_dict["Loss/Train"] = values['train_loss']
+        if 'train_loss_bbox' in values:
+            log_dict["Loss/Train/BBox"] = values['train_loss_bbox']
+        if 'train_loss_distance' in values:
+            log_dict["Loss/Train/Distance"] = values['train_loss_distance']
+        if 'train_loss_heading' in values:
+            log_dict["Loss/Train/Heading"] = values['train_loss_heading']
+
         if 'test_loss' in values:
             log_dict["Loss/Test"] = values['test_loss']
+        if 'test_loss_bbox' in values:
+            log_dict["Loss/Test/BBox"] = values['test_loss_bbox']
+        if 'test_loss_distance' in values:
+            log_dict["Loss/Test/Distance"] = values['test_loss_distance']
+        if 'test_loss_heading' in values:
+            log_dict["Loss/Test/Heading"] = values['test_loss_heading']
+
+        if 'distance_error' in values:
+            log_dict["Metrics/abs_distance_err"] = values['distance_error']
+        if 'heading_score' in values:
+            log_dict["Metrics/abs_heading_err"] = values['heading_score']
 
         if 'test_coco_eval_bbox' in values:
             coco_eval = values['test_coco_eval_bbox']
