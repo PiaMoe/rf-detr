@@ -76,7 +76,7 @@ def inference(run_name, data_path, weights_path, classes):
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out_video_path = os.path.join(output_path, f"{run_name}_annotated.mp4")
         out_video = cv2.VideoWriter(out_video_path, fourcc, fps, (width, height))
-
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         total_start = time.time()
         frame_count = 0
         while cap.isOpened():
@@ -87,7 +87,7 @@ def inference(run_name, data_path, weights_path, classes):
             start = time.time()
             detections = model.predict(frame, threshold=0.25)
             infer_time = time.time() - start
-            print(f"Frame {frame_count}: inference time = {infer_time:.3f}s")
+            print(f"Frame {frame_count}/ {total_frames}: inference time = {infer_time:.3f}s")
 
             if detections:
                 image_annotated = annotate_image_cv2(frame, detections, classes=classes)
@@ -143,7 +143,7 @@ def inference(run_name, data_path, weights_path, classes):
 
 
 if __name__ == "__main__":
-    run_name = "DetDistHeadAmalfi"
+    run_name = "DetDistHeadAmalfi2"
     data_path = "../../../data/BOArDING_Dataset/testVideos/AmalfiCoastClips.mp4"
     weights_path = "../runs/train/DetDistHead/checkpoint_best_total.pth"
     classes = ['boat', 'buoy']
