@@ -29,6 +29,8 @@ from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, Metrics
 from rfdetr.util.coco_classes import COCO_CLASSES
 
 logger = getLogger(__name__)
+
+
 class RFDETR:
     means = [0.485, 0.456, 0.406]
     stds = [0.229, 0.224, 0.225]
@@ -56,7 +58,7 @@ class RFDETR:
     def train(self, **kwargs):
         config = self.get_train_config(**kwargs)
         self.train_from_config(config, **kwargs)
-    
+
     def optimize_for_inference(self, compile=True, batch_size=1, dtype=torch.float32):
         self.remove_optimized_model()
 
@@ -74,14 +76,14 @@ class RFDETR:
             self.model.inference_model = torch.jit.trace(
                 self.model.inference_model,
                 torch.randn(
-                    batch_size, 3, self.model.resolution, self.model.resolution, 
+                    batch_size, 3, self.model.resolution, self.model.resolution,
                     device=self.model.device,
                     dtype=dtype
                 )
             )
             self._optimized_has_been_compiled = True
             self._optimized_batch_size = batch_size
-    
+
     def remove_optimized_model(self):
         self.model.inference_model = None
         self._is_optimized_for_inference = False
@@ -89,17 +91,17 @@ class RFDETR:
         self._optimized_batch_size = None
         self._optimized_resolution = None
         self._optimized_half = False
-    
+
     def export(self, **kwargs):
         self.model.export(**kwargs)
 
     def train_from_config(self, config: TrainConfig, **kwargs):
         with open(
-            os.path.join(config.dataset_dir, "train", "train.json"), "r"
+                os.path.join(config.dataset_dir, "train", "train.json"), "r"
         ) as f:
             anns = json.load(f)
             num_classes = len(anns["categories"])
-            class_names = [c["name"] for c in anns["categories"]]# if c["supercategory"] != "none"]
+            class_names = [c["name"] for c in anns["categories"]]  # if c["supercategory"] != "none"]
             self.model.class_names = class_names
 
         if self.model_config.num_classes != num_classes:
@@ -108,14 +110,13 @@ class RFDETR:
                 f"reinitializing your detection head with {num_classes} classes."
             )
             self.model.reinitialize_detection_head(num_classes)
-        
-        
+
         train_config = config.dict()
         model_config = self.model_config.dict()
         model_config.pop("num_classes")
         if "class_names" in model_config:
             model_config.pop("class_names")
-        
+
         if "class_names" in train_config and train_config["class_names"] is None:
             train_config["class_names"] = class_names
 
@@ -124,7 +125,7 @@ class RFDETR:
                 model_config.pop(k)
             if k in kwargs:
                 kwargs.pop(k)
-        
+
         all_kwargs = {**model_config, **train_config, **kwargs, "num_classes": num_classes}
 
         metrics_plot_sink = MetricsPlotSink(output_dir=config.output_dir)
@@ -166,18 +167,19 @@ class RFDETR:
 
     def get_model(self, config: ModelConfig):
         return Model(**config.dict())
-    
+
     # Get class_names from the model
     @property
     def class_names(self):
         if hasattr(self.model, 'class_names') and self.model.class_names:
-            return {i+1: name for i, name in enumerate(self.model.class_names)}
-            
+            return {i + 1: name for i, name in enumerate(self.model.class_names)}
+
         return COCO_CLASSES
 
     def predict(
             self,
-            images: Union[str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]],
+            images: Union[
+                str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]],
             threshold: float = 0.5,
             **kwargs,
     ) -> Union[sv.Detections, List[sv.Detections]]:
@@ -226,7 +228,7 @@ class RFDETR:
 
             if not isinstance(img, torch.Tensor):
                 img = F.to_tensor(img)
-            
+
             if (img > 1).any():
                 raise ValueError(
                     "Image has pixel values above 1. Please ensure the image is "
@@ -238,7 +240,7 @@ class RFDETR:
                     f"{img.shape[0]} channels."
                 )
             img_tensor = img
-            
+
             h, w = img_tensor.shape[1:]
             orig_sizes.append((h, w))
 
@@ -306,6 +308,7 @@ class RFDETRBase(RFDETR):
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
+
 
 class RFDETRLarge(RFDETR):
     def get_model_config(self, **kwargs):

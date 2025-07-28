@@ -35,8 +35,10 @@ from rfdetr.models.backbone import build_backbone
 from rfdetr.models.matcher import build_matcher
 from rfdetr.models.transformer import build_transformer
 
+
 class LWDETR(nn.Module):
     """ This is the Group DETR v3 module that performs object detection """
+
     def __init__(self,
                  backbone,
                  transformer,
@@ -67,10 +69,10 @@ class LWDETR(nn.Module):
         self.dist_embed = nn.Linear(hidden_dim, 1)
         self.head_embed = nn.Linear(hidden_dim, 2)
         # TODO PIA: test if MLP makes a difference for distance & heading prediction
-        #self.dist_embed = MLP(hidden_dim, hidden_dim, 1, 3)  # Distance prediction head
-        #self.head_embed = MLP(hidden_dim, hidden_dim, 2, 3)  # Heading prediction head
+        # self.dist_embed = MLP(hidden_dim, hidden_dim, 1, 3)  # Distance prediction head
+        # self.head_embed = MLP(hidden_dim, hidden_dim, 2, 3)  # Heading prediction head
 
-        query_dim=4
+        query_dim = 4
         self.refpoint_embed = nn.Embedding(num_queries * group_detr, query_dim)
         self.query_feat = nn.Embedding(num_queries * group_detr, hidden_dim)
         nn.init.constant_(self.refpoint_embed.weight.data, 0)
@@ -115,7 +117,7 @@ class LWDETR(nn.Module):
         # Create new classification head
         del self.class_embed
         self.add_module("class_embed", nn.Linear(self.transformer.d_model, num_classes))
-        
+
         # Initialize with focal loss bias adjustment
         prior_prob = 0.01
         bias_value = -math.log((1 - prior_prob) / prior_prob)
@@ -251,10 +253,10 @@ class LWDETR(nn.Module):
         """ """
         dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, vit_encoder_num_layers)]
         for i in range(vit_encoder_num_layers):
-            if hasattr(self.backbone[0].encoder, 'blocks'): # Not aimv2
+            if hasattr(self.backbone[0].encoder, 'blocks'):  # Not aimv2
                 if hasattr(self.backbone[0].encoder.blocks[i].drop_path, 'drop_prob'):
                     self.backbone[0].encoder.blocks[i].drop_path.drop_prob = dp_rates[i]
-            else: # aimv2
+            else:  # aimv2
                 if hasattr(self.backbone[0].encoder.trunk.blocks[i].drop_path, 'drop_prob'):
                     self.backbone[0].encoder.trunk.blocks[i].drop_path.drop_prob = dp_rates[i]
 
@@ -270,6 +272,7 @@ class SetCriterion(nn.Module):
         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
+
     def __init__(self,
                  num_classes,
                  matcher,
@@ -562,7 +565,15 @@ class SetCriterion(nn.Module):
         # Compute all the requested losses
         losses = {}
         for loss in self.losses:
-            losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes))
+            current_loss = self.get_loss(loss, outputs, targets, indices, num_boxes)
+
+            # no gradient for the losses that are not used for training
+            if loss in ['distance'] and current_loss.get('abs_distance_error') is not None:
+                current_loss['abs_distance_error'] = current_loss['abs_distance_error'].detach()
+            if loss in ['heading'] and current_loss.get('abs_heading_diff') is not None:
+                current_loss['abs_heading_diff'] = current_loss['abs_heading_diff'].detach()
+
+            losses.update(current_loss)
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
@@ -587,6 +598,11 @@ class SetCriterion(nn.Module):
                     kwargs['log'] = False
                 l_dict = self.get_loss(loss, enc_outputs, targets, indices, num_boxes, **kwargs)
                 l_dict = {k + f'_enc': v for k, v in l_dict.items()}
+                if 'abs_distance_error_enc' in l_dict and l_dict['abs_distance_error_enc'] is not None:
+                    l_dict['abs_distance_error_enc'] = l_dict['abs_distance_error_enc'].detach()
+                if 'abs_heading_diff_enc' in l_dict and l_dict['abs_heading_diff_enc'] is not None:
+                    l_dict['abs_heading_diff_enc'] = l_dict['abs_heading_diff_enc'].detach()
+
                 losses.update(l_dict)
 
         return losses
@@ -651,7 +667,7 @@ class PostProcess(nn.Module):
         self.num_select = num_select
 
     @torch.no_grad()
-    def forward(self, outputs, target_sizes):
+    def forward(self, outputs, target_sizes, max_distance):
         """ Perform the computation
         Parameters:
             outputs: raw outputs of the model
@@ -660,6 +676,7 @@ class PostProcess(nn.Module):
                           For visualization, this should be the image size after data augment, but before padding
         """
         out_logits, out_bbox = outputs['pred_logits'], outputs['pred_boxes']
+        out_distance, out_heading = outputs['pred_distance'], outputs['pred_heading']
 
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
@@ -677,7 +694,13 @@ class PostProcess(nn.Module):
         scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
         boxes = boxes * scale_fct[:, None, :]
 
-        results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
+        # rescale distance
+        distance = out_distance.squeeze(-1) * max_distance
+        # heading in degrees
+        heading = torch.rad2deg(torch.atan2(out_heading[..., 1], out_heading[..., 0])) % 360
+
+        results = [{'scores': s, 'labels': l, 'boxes': b, 'distance': d, 'heading': h}
+                   for s, l, b, d, h in zip(scores, labels, boxes, distance, heading)]
 
         return results
 
@@ -725,7 +748,7 @@ def build_model(args):
         layer_norm=args.layer_norm,
         target_shape=args.shape if hasattr(args, 'shape') else (args.resolution, args.resolution) if hasattr(args,
                                                                                                              'resolution') else (
-        640, 640),
+            640, 640),
         rms_norm=args.rms_norm,
         backbone_lora=args.backbone_lora,
         force_no_pretrain=args.force_no_pretrain,
@@ -761,6 +784,8 @@ def build_criterion_and_postprocessors(args):
     weight_dict['loss_giou'] = args.giou_loss_coef
     weight_dict['loss_distance'] = args.dist_loss_coef
     weight_dict['loss_heading'] = args.head_loss_coef
+    weight_dict['abs_distance_error'] = 1.0
+    weight_dict['abs_heading_diff'] = 1.0
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}

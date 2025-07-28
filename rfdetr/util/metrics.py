@@ -125,10 +125,12 @@ class MetricsTensorBoardSink:
     def __init__(self, output_dir: str):
         if SummaryWriter:
             self.writer = SummaryWriter(log_dir=output_dir)
-            print(f"TensorBoard logging initialized. To monitor logs, use 'tensorboard --logdir {output_dir}' and open http://localhost:6006/ in browser.")
+            print(
+                f"TensorBoard logging initialized. To monitor logs, use 'tensorboard --logdir {output_dir}' and open http://localhost:6006/ in browser.")
         else:
             self.writer = None
-            print("Unable to initialize TensorBoard. Logging is turned off for this session.  Run 'pip install tensorboard' to enable logging.")
+            print(
+                "Unable to initialize TensorBoard. Logging is turned off for this session.  Run 'pip install tensorboard' to enable logging.")
 
     def update(self, values: dict):
         if not self.writer:
@@ -170,8 +172,9 @@ class MetricsTensorBoardSink:
     def close(self):
         if not self.writer:
             return
-        
+
         self.writer.close()
+
 
 class MetricsWandBSink:
     """
@@ -184,7 +187,8 @@ class MetricsWandBSink:
         config (dict, optional): Input parameters, like hyperparameters or data preprocessing settings for the run for later comparison.
     """
 
-    def __init__(self, output_dir: str, project: Optional[str] = None, run: Optional[str] = None, config: Optional[dict] = None):
+    def __init__(self, output_dir: str, project: Optional[str] = None, run: Optional[str] = None,
+                 config: Optional[dict] = None):
         self.output_dir = output_dir
         if wandb:
             self.run = wandb.init(
@@ -196,7 +200,8 @@ class MetricsWandBSink:
             print(f"W&B logging initialized. To monitor logs, open {wandb.run.url}.")
         else:
             self.run = None
-            print("Unable to initialize W&B. Logging is turned off for this session. Run 'pip install wandb' to enable logging.")
+            print(
+                "Unable to initialize W&B. Logging is turned off for this session. Run 'pip install wandb' to enable logging.")
 
     def update(self, values: dict):
         if not wandb or not self.run:
@@ -223,9 +228,9 @@ class MetricsWandBSink:
         if 'test_loss_heading' in values:
             log_dict["Loss/Test/Heading"] = values['test_loss_heading']
 
-        if 'distance_error' in values:
+        if 'test_abs_distance_error' in values:
             log_dict["Metrics/abs_distance_err"] = values['test_abs_distance_error']
-        if 'heading_score' in values:
+        if 'test_abs_heading_diff' in values:
             log_dict["Metrics/abs_heading_err"] = values['test_abs_heading_diff']
 
         if 'test_coco_eval_bbox' in values:

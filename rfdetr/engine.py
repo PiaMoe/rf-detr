@@ -62,9 +62,7 @@ def train_one_epoch(
 ):
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
-    metric_logger.add_meter(
-        "class_error", utils.SmoothedValue(window_size=1, fmt="{value:.2f}")
-    )
+    metric_logger.add_meter("class_error", utils.SmoothedValue(window_size=1, fmt="{value:.2f}"))
     header = "Epoch: [{}]".format(epoch)
     print_freq = 10
     start_steps = epoch * num_training_steps_per_epoch
@@ -120,9 +118,16 @@ def train_one_epoch(
                 weight_dict = criterion.weight_dict
                 losses = sum(
                     (1 / args.grad_accum_steps) * loss_dict[k] * weight_dict[k]
-                    for k in loss_dict.keys()
-                    if k in weight_dict
+                    for k in loss_dict
+                    if k in weight_dict and k not in ["abs_distance_error", "abs_heading_diff",
+                                                      "abs_distance_error_enc", "abs_heading_diff_enc"]
                 )
+
+                #for name, loss in loss_dict.items():
+                #    if isinstance(loss, torch.Tensor) and loss.requires_grad and loss.grad_fn is not None:
+                #        print(f"{name} influences gradient ✅")
+                #    else:
+                #        print(f"{name} does NOT influence gradient ❌")
 
 
             scaler.scale(losses).backward()
@@ -137,7 +142,15 @@ def train_one_epoch(
             for k, v in loss_dict_reduced.items()
             if k in weight_dict
         }
-        losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
+        losses_reduced_scaled = sum(
+            loss_dict_reduced[k] * weight_dict[k]
+            for k in loss_dict_reduced
+            if k in weight_dict and k not in [
+                "abs_distance_error", "abs_heading_diff",
+                "abs_distance_error_enc", "abs_heading_diff_enc",
+                "class_error", "cardinality_error", "class_error_enc", "cardinality_error_enc"
+            ]
+        )
 
         loss_value = losses_reduced_scaled.item()
 
@@ -163,7 +176,7 @@ def train_one_epoch(
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
+    print("\nAveraged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
@@ -252,8 +265,6 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
 
     iou_types = tuple(k for k in ("segm", "bbox") if k in postprocessors.keys())
     coco_evaluator = CocoEvaluator(base_ds, iou_types)
-    heading_scores = []
-    distance_errors = []
 
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
@@ -294,41 +305,29 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
             f"{k}_unscaled": v for k, v in loss_dict_reduced.items()
         }
 
-        # compute heading accuracy
-        for i in range(len(targets)):
-            gt = targets[i]["heading"]  # shape: [N, 2]
-            pred = outputs["pred_heading"][i]  # shape: [N, 2]
-            if gt.numel() == 0 or pred.numel() == 0:
-                continue
-
-            head_deg_pred =torch.rad2deg(torch.arctan2(pred[:, 1], pred[:, 0])) % 360
-            head_deg_gt = torch.rad2deg(torch.arctan2(gt[:, 1], gt[:, 0])) % 360
-            abs_diff = torch.abs(head_deg_pred - head_deg_gt)
-            abs_error = torch.minimum(abs_diff, 360 - abs_diff)  # [N]
-            heading_scores.extend(abs_error.cpu().tolist())
-
-        # compute abs distance error
-        for i in range(len(targets)):
-            gt = targets[i]["distance"]  # shape: [N]
-            pred = outputs["pred_distance"][i]  # shape: [N]
-
-            if gt.numel() == 0 or pred.numel() == 0:
-                continue
-
-            rescaled_dist = pred * args.max_distance
-            abs_err = torch.abs(gt - rescaled_dist)
-            distance_errors.extend(abs_err.cpu().tolist())
-
-
+        # sum only relevant losses for logging
+        ignored_losses = [
+            "abs_distance_error", "abs_heading_diff",
+            "abs_distance_error_enc", "abs_heading_diff_enc",
+            "class_error", "cardinality_error",
+            "class_error_enc", "cardinality_error_enc"
+        ]
+        training_loss_sum = sum(
+            v * weight_dict[k]
+            for k, v in loss_dict_reduced.items()
+            if k in weight_dict and k not in ignored_losses
+        )
         metric_logger.update(
-            loss=sum(loss_dict_reduced_scaled.values()),
+            loss=training_loss_sum,
             **loss_dict_reduced_scaled,
             **loss_dict_reduced_unscaled,
         )
+
+        # add extra metrics for logging
         metric_logger.update(class_error=loss_dict_reduced["class_error"])
 
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-        results = postprocessors["bbox"](outputs, orig_target_sizes)
+        results = postprocessors["bbox"](outputs, orig_target_sizes, args.max_distance)
         res = {
             target["image_id"].item(): output
             for target, output in zip(targets, results)
@@ -356,10 +355,5 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
 
         if "segm" in postprocessors.keys():
             stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
-
-    if heading_scores:
-        stats["heading_score"] = sum(heading_scores) / len(heading_scores)
-    if distance_errors:
-        stats["distance_error"] = sum(distance_errors) / len(distance_errors)
 
     return stats, coco_evaluator
