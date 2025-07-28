@@ -1,12 +1,17 @@
 import os
 import json
 import cv2
-import numpy as np
 import math
 from rfdetr import RFDETRBase
-import supervision as sv
 import time
 from glob import glob
+import torch
+
+def time_synchronized():
+    # pytorch-accurate time
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    return time.time()
 
 def get_class_color_with_distance(cls_name, distance):
     base_colors = {
@@ -64,8 +69,10 @@ def annotate_image_cv2(image, detections, classes):
 
 def inference(run_name, data_path, weights_path, classes):
     output_path = f"../runs/detect/{run_name}"
+    os.makedirs(output_path, exist_ok=True)
 
     model = RFDETRBase(pretrain_weights=weights_path)
+    #model.optimize_for_inference()
 
     if data_path.endswith(".mp4"):  # video mode
         cap = cv2.VideoCapture(data_path)
@@ -77,16 +84,16 @@ def inference(run_name, data_path, weights_path, classes):
         out_video_path = os.path.join(output_path, f"{run_name}_annotated.mp4")
         out_video = cv2.VideoWriter(out_video_path, fourcc, fps, (width, height))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        total_start = time.time()
+        total_start = time_synchronized()
         frame_count = 0
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
 
-            start = time.time()
+            start = time_synchronized()
             detections = model.predict(frame, threshold=0.25)
-            infer_time = time.time() - start
+            infer_time = time_synchronized() - start
             print(f"Frame {frame_count}/ {total_frames}: inference time = {infer_time:.3f}s")
 
             if detections:
@@ -99,7 +106,7 @@ def inference(run_name, data_path, weights_path, classes):
 
         cap.release()
         out_video.release()
-        total_time = time.time() - total_start
+        total_time = time_synchronized() - total_start
         print(f"\ninference time total video: {total_time:.2f}s")
 
 
@@ -116,9 +123,9 @@ def inference(run_name, data_path, weights_path, classes):
             save_label = os.path.join(output_label_path, label_name)
             save_image = os.path.join(output_img_path, img_name)
             image = cv2.imread(path)
-            start = time.time()
+            start = time_synchronized()
             detections = model.predict(image, threshold=0.25)
-            infer_time = time.time() - start
+            infer_time = time_synchronized() - start
             print(f"image {i + 1}/{len(image_paths)} ({img_name}): inference time = {infer_time:.3f}s")
 
             if not detections:
