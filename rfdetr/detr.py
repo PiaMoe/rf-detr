@@ -290,14 +290,14 @@ class RFDETR:
             labels = labels[keep]
             boxes = boxes[keep]
 
-            detections = sv.Detections(
-                xyxy=boxes.float().cpu().numpy(),
-                confidence=scores.float().cpu().numpy(),
-                class_id=labels.cpu().numpy(),
-            )
-            detections_list.append(detections)
+            for i in range(len(scores)):
+                detections_list.append({
+                    "xyxy": boxes[i].float().cpu().numpy(),
+                    "confidence": float(scores[i].cpu()),
+                    "class_id": int(labels[i].cpu())
+                })
 
-        return detections_list if len(detections_list) > 1 else detections_list[0]
+        return detections_list
 
 
 class RFDETRBase(RFDETR):
