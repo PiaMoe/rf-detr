@@ -279,27 +279,34 @@ class RFDETR:
                     "pred_boxes": predictions[0]
                 }
             target_sizes = torch.tensor(orig_sizes, device=self.model.device)
-            results = self.model.postprocessors["bbox"](predictions, target_sizes=target_sizes)
+            results = self.model.postprocessors["bbox"](predictions, target_sizes=target_sizes,
+                                                        max_distance=self.model_config.max_distance)
 
         detections_list = []
         for result in results:
             scores = result["scores"]
             labels = result["labels"]
             boxes = result["boxes"]
+            distance = result["distance"]
+            heading = result["heading"]
 
             keep = scores > threshold
             scores = scores[keep]
             labels = labels[keep]
             boxes = boxes[keep]
+            distance = distance[keep]
+            heading = heading[keep]
 
-            detections = sv.Detections(
-                xyxy=boxes.float().cpu().numpy(),
-                confidence=scores.float().cpu().numpy(),
-                class_id=labels.cpu().numpy(),
-            )
-            detections_list.append(detections)
+            for i in range(len(scores)):
+                detections_list.append({
+                    "xyxy": boxes[i].float().cpu().numpy(),
+                    "confidence": float(scores[i].cpu()),
+                    "class_id": int(labels[i].cpu()),
+                    "distance": float(distance[i].cpu()),
+                    "heading": float(heading[i].cpu())
+                })
 
-        return detections_list if len(detections_list) > 1 else detections_list[0]
+        return detections_list
 
 
 class RFDETRBase(RFDETR):

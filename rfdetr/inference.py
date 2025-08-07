@@ -1,27 +1,17 @@
 import os
 import json
 import cv2
-import numpy as np
 import math
 from rfdetr import RFDETRBase
-import supervision as sv
+import time
+from glob import glob
+import torch
 
-run_name = "DetDistHead_9epochs"
-data_path = "../../../data/BOArDING_Dataset/BOArDING_cos_sin"
-output_path = f"../runs/detect/{run_name}"
-output_img_path = os.path.join(output_path, "images")
-output_label_path = os.path.join(output_path, "labels")
-os.makedirs(output_img_path, exist_ok=True)
-os.makedirs(output_label_path, exist_ok=True)
-
-# Dataset laden (für Klassennamen)
-ds = sv.DetectionDataset.from_coco(
-    images_directory_path=f"{data_path}/val/images",
-    annotations_path=f"{data_path}/val/val.json",
-)
-
-model = RFDETRBase(pretrain_weights="../runs/checkpoint0009.pth")
-
+def time_synchronized():
+    # pytorch-accurate time
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    return time.time()
 
 def get_class_color_with_distance(cls_name, distance):
     base_colors = {
@@ -77,37 +67,91 @@ def annotate_image_cv2(image, detections, classes):
 
     return image
 
+def inference(run_name, data_path, weights_path, classes):
+    output_path = f"../runs/detect/{run_name}"
+    os.makedirs(output_path, exist_ok=True)
 
-# Hauptschleife
-for i, data in enumerate(ds):
-    path, _, _ = data
-    img_name = os.path.basename(path)
-    label_name = img_name.replace(".jpg", ".json")
-    save_label = os.path.join(output_label_path, label_name)
-    save_image = os.path.join(output_img_path, img_name)
+    model = RFDETRBase(pretrain_weights=weights_path)
+    #model.optimize_for_inference()
 
-    image = cv2.imread(path)
-    detections = model.predict(image, threshold=0.25)
+    if data_path.endswith(".mp4"):  # video mode
+        cap = cv2.VideoCapture(data_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    if not detections:  # Skip if no detections
-        continue
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out_video_path = os.path.join(output_path, f"{run_name}_annotated.mp4")
+        out_video = cv2.VideoWriter(out_video_path, fourcc, fps, (width, height))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        total_start = time_synchronized()
+        frame_count = 0
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-    # Annotieren
-    image_annotated = annotate_image_cv2(image, detections, ds.classes)
-    cv2.imwrite(save_image, image_annotated)
-    print(f"Bild {i + 1}/{len(ds)}: {img_name} annotiert und gespeichert.")
+            start = time_synchronized()
+            detections = model.predict(frame, threshold=0.25)
+            infer_time = time_synchronized() - start
+            print(f"Frame {frame_count}/ {total_frames}: inference time = {infer_time:.3f}s")
 
-    # JSON Label speichern
-    detection_data = [
-        {
-            "class_id": det["class_id"],
-            "class_name": ds.classes[det["class_id"]],
-            "confidence": det["confidence"],
-            "bbox": list(map(float, det["xyxy"])),
-            "distance": det["distance"],
-            "heading": det["heading"]
-        }
-        for det in detections
-    ]
-    with open(save_label, "w") as f:
-        json.dump(detection_data, f, indent=2)
+            if detections:
+                image_annotated = annotate_image_cv2(frame, detections, classes=classes)
+            else:
+                image_annotated = frame  # unbearbeitet
+
+            out_video.write(image_annotated)
+            frame_count += 1
+
+        cap.release()
+        out_video.release()
+        total_time = time_synchronized() - total_start
+        print(f"\ninference time total video: {total_time:.2f}s")
+
+
+    else:
+        output_img_path = os.path.join(output_path, "images")
+        output_label_path = os.path.join(output_path, "labels")
+        os.makedirs(output_img_path, exist_ok=True)
+        os.makedirs(output_label_path, exist_ok=True)
+        image_paths = sorted(glob(os.path.join(data_path, "*.jpg")) + glob(os.path.join(data_path, "*.png")))
+
+        for i, path in enumerate(image_paths):
+            img_name = os.path.basename(path)
+            label_name = img_name.rsplit(".", 1)[0] + ".json"
+            save_label = os.path.join(output_label_path, label_name)
+            save_image = os.path.join(output_img_path, img_name)
+            image = cv2.imread(path)
+            start = time_synchronized()
+            detections = model.predict(image, threshold=0.25)
+            infer_time = time_synchronized() - start
+            print(f"image {i + 1}/{len(image_paths)} ({img_name}): inference time = {infer_time:.3f}s")
+
+            if not detections:
+                continue
+
+            image_annotated = annotate_image_cv2(image, detections, classes)
+            cv2.imwrite(save_image, image_annotated)
+
+            detection_data = [
+                {
+                    "class_id": det["class_id"],
+                    "class_name": classes[det["class_id"]],
+                    "confidence": det["confidence"],
+                    "bbox": list(map(float, det["xyxy"])),
+                    "distance": det["distance"],
+                    "heading": det["heading"]
+                }
+                for det in detections
+            ]
+            with open(save_label, "w") as f:
+                json.dump(detection_data, f, indent=2)
+
+
+if __name__ == "__main__":
+    run_name = "DetDistHeadAmalfi2"
+    data_path = "../../../data/BOArDING_Dataset/testVideos/AmalfiCoastClips.mp4"
+    weights_path = "../runs/train/DetDistHead/checkpoint_best_total.pth"
+    classes = ['boat', 'buoy']
+    inference(run_name, data_path, weights_path, classes)
