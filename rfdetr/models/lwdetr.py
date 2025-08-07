@@ -464,8 +464,11 @@ class SetCriterion(nn.Module):
         src_distance_rescaled = src_distance * self.max_distance
         abs_err = torch.abs(target_distance - src_distance_rescaled)
 
-        losses = {'loss_distance': loss_dist.sum() / num_boxes,
-                  'abs_distance_error': abs_err.sum() / num_boxes}
+        num_losses = len(src_distance)
+        zero_tensor = torch.tensor(0.0, device=loss_dist.device)
+
+        losses = {'loss_distance': loss_dist.sum() / num_losses if num_losses > 0 else zero_tensor,
+                  'abs_distance_error': abs_err.sum() / num_losses if num_losses > 0 else zero_tensor}
         return losses
 
     def loss_heading(self, outputs, targets, indices, num_boxes):
@@ -508,12 +511,19 @@ class SetCriterion(nn.Module):
         cos_sim_loss = 1.0 - cos_sim  # 1 - cos(Δθ), small when headings are similar
 
         # compute absolute difference of heading in degrees for logging
-        pred_head_deg = torch.rad2deg(torch.arctan2(pred_unit[:, 1], pred_unit[:, 0])) % 360
-        target_head_deg = torch.rad2deg(torch.arctan2(target_unit[:, 1], target_unit[:, 0])) % 360
-        abs_diff = torch.abs(pred_head_deg - target_head_deg)
+        pred_head_deg = torch.rad2deg(torch.arctan2(pred_unit[:, 1], pred_unit[:, 0]))
+        target_head_deg = torch.rad2deg(torch.arctan2(target_unit[:, 1], target_unit[:, 0]))
+        abs_diff = torch.abs(pred_head_deg - target_head_deg) % 360
         abs_error = torch.minimum(abs_diff, 360 - abs_diff)
 
-        losses = {'loss_heading': cos_sim_loss.sum() / num_boxes, 'abs_heading_diff': abs_error.sum() / num_boxes}
+        num_losses = len(pred_head)
+
+        zero_tensor = torch.tensor(0.0, device=cos_sim_loss.device)
+
+        losses = {
+            'loss_heading': cos_sim_loss.sum() / num_losses if num_losses > 0 else zero_tensor,
+            'abs_heading_diff': abs_error.sum() / num_losses if num_losses > 0 else zero_tensor
+        }
         return losses
 
     def _get_src_permutation_idx(self, indices):
