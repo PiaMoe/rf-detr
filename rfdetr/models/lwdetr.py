@@ -66,11 +66,11 @@ class LWDETR(nn.Module):
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
-        self.dist_embed = nn.Linear(hidden_dim, 1)
-        self.head_embed = nn.Linear(hidden_dim, 2)
+        #self.dist_embed = nn.Linear(hidden_dim, 1)
+        #self.head_embed = nn.Linear(hidden_dim, 2)
         # TODO PIA: test if MLP makes a difference for distance & heading prediction
-        # self.dist_embed = MLP(hidden_dim, hidden_dim, 1, 3)  # Distance prediction head
-        # self.head_embed = MLP(hidden_dim, hidden_dim, 2, 3)  # Heading prediction head
+        self.dist_embed = MLP(hidden_dim, hidden_dim, 1, 3)  # Distance prediction head
+        self.head_embed = MLP(hidden_dim, hidden_dim, 2, 3)  # Heading prediction head
 
         query_dim = 4
         self.refpoint_embed = nn.Embedding(num_queries * group_detr, query_dim)

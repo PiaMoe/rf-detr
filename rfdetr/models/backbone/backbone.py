@@ -44,7 +44,7 @@ class Backbone(BackboneBase):
                  out_feature_indexes: list=None,
                  projector_scale: list=None,
                  use_cls_token: bool = False,
-                 freeze_encoder: bool = False,
+                 freeze_encoder: bool = True,
                  layer_norm: bool = False,
                  target_shape: tuple[int, int] = (640, 640),
                  rms_norm: bool = False,
@@ -81,8 +81,11 @@ class Backbone(BackboneBase):
         )
         # build encoder + projector as backbone module
         if freeze_encoder:
+            print("FREEZING ENCODER")
             for param in self.encoder.parameters():
                 param.requires_grad = False
+        else:
+            print("NOT FREEZING ENCODER")
 
         self.projector_scale = projector_scale
         assert len(self.projector_scale) > 0
