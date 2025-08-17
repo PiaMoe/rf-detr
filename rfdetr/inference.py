@@ -29,8 +29,8 @@ def annotate_image_cv2(image, detections, classes):
         class_id = det["class_id"]
         class_name = classes[class_id]
         conf = det["confidence"]
-        dist = det.get("distance", 0.0)
-        head = det.get("heading", 0.0)
+        dist = det["distance"]
+        head = det["heading"]
 
         color = get_class_color_with_distance(class_name, dist)
         label = f"{class_name} {conf:.2f} {dist:.1f}m {head:.1f}deg"
@@ -150,8 +150,8 @@ def inference(run_name, data_path, weights_path, classes):
 
 
 if __name__ == "__main__":
-    run_name = "DetDistHeadAmalfi2"
-    data_path = "../../../data/BOArDING_Dataset/testVideos/AmalfiCoastClips.mp4"
-    weights_path = "../runs/train/DetDistHead/checkpoint_best_total.pth"
+    run_name = "DetDistHeadFreezeMLP"
+    data_path = "../../../data/BOArDING_Dataset/BOArDING_Det/val/images"
+    weights_path = "../runs/train/DetDistHead_Freeze/checkpoint_best_total.pth"
     classes = ['boat', 'buoy']
     inference(run_name, data_path, weights_path, classes)

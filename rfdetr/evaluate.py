@@ -1,5 +1,7 @@
 import os
 import json
+from tkinter import Image
+
 import cv2
 from rfdetr import RFDETRBase
 import matplotlib.pyplot as plt
@@ -252,115 +254,152 @@ def plot_heading_err(data, path):
     plt.savefig(path)
 
 
-""""
-def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, args=None):
-    model.eval()
-    if args.fp16_eval:
-        model.half()
-    criterion.eval()
 
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter(
-        "class_error", utils.SmoothedValue(window_size=1, fmt="{value:.2f}")
-    )
-    header = "Test:"
+import numpy as np
 
-    iou_types = tuple(k for k in ("segm", "bbox") if k in postprocessors.keys())
-    coco_evaluator = CocoEvaluator(base_ds, iou_types)
+def iou(boxA, boxB):
+    # box: [x1, y1, x2, y2]
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
 
-    for samples, targets in metric_logger.log_every(data_loader, 10, header):
-        samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+    interArea = max(0, xB - xA) * max(0, yB - yA)
+    if interArea == 0:
+        return 0.0
 
-        if args.fp16_eval:
-            samples.tensors = samples.tensors.half()
+    boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+    boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+    return interArea / float(boxAArea + boxBArea - interArea)
 
-        # Add autocast for evaluation
-        with autocast(**get_autocast_args(args)):
-            outputs = model(samples)
 
-        if args.fp16_eval:
-            for key in outputs.keys():
-                if key == "enc_outputs":
-                    for sub_key in outputs[key].keys():
-                        outputs[key][sub_key] = outputs[key][sub_key].float()
-                elif key == "aux_outputs":
-                    for idx in range(len(outputs[key])):
-                        for sub_key in outputs[key][idx].keys():
-                            outputs[key][idx][sub_key] = outputs[key][idx][
-                                sub_key
-                            ].float()
-                else:
-                    outputs[key] = outputs[key].float()
+def yolo_to_xyxy(label, img_w, img_h):
+    # YOLO: class cx cy w h distance heading
+    cls, cx, cy, w, h, dist, head = label
+    cx *= img_w
+    cy *= img_h
+    w *= img_w
+    h *= img_h
+    x1 = cx - w / 2
+    y1 = cy - h / 2
+    x2 = cx + w / 2
+    y2 = cy + h / 2
+    return [x1, y1, x2, y2], dist, head
 
-        loss_dict = criterion(outputs, targets)
-        weight_dict = criterion.weight_dict
+def create_distance_bins(max_distance, number_bins):
+    # Calculate the width of each bin
+    bin_width = max_distance / number_bins
 
-        # reduce losses over all GPUs for logging purposes
-        loss_dict_reduced = utils.reduce_dict(loss_dict)
-        loss_dict_reduced_scaled = {
-            k: v * weight_dict[k]
-            for k, v in loss_dict_reduced.items()
-            if k in weight_dict
-        }
-        loss_dict_reduced_unscaled = {
-            f"{k}_unscaled": v for k, v in loss_dict_reduced.items()
-        }
+    # Create the bins
+    distance_bins = [(i * bin_width, (i + 1) * bin_width) for i in range(number_bins)]
 
-        # sum only relevant losses for logging
-        ignored_losses = [
-            "abs_distance_error", "abs_heading_diff",
-            "abs_distance_error_enc", "abs_heading_diff_enc",
-            "class_error", "cardinality_error",
-            "class_error_enc", "cardinality_error_enc"
-        ]
-        training_loss_sum = sum(
-            v * weight_dict[k]
-            for k, v in loss_dict_reduced.items()
-            if k in weight_dict and k not in ignored_losses
-        )
-        metric_logger.update(
-            loss=training_loss_sum,
-            **loss_dict_reduced_scaled,
-            **loss_dict_reduced_unscaled,
-        )
+    return distance_bins
 
-        # add extra metrics for logging
-        metric_logger.update(class_error=loss_dict_reduced["class_error"])
 
-        orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-        results = postprocessors["bbox"](outputs, orig_target_sizes, args.max_distance)
-        res = {
-            target["image_id"].item(): output
-            for target, output in zip(targets, results)
-        }
-        if coco_evaluator is not None:
-            coco_evaluator.update(res)
 
-    # gather the stats from all processes
-    metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
-    if coco_evaluator is not None:
-        coco_evaluator.synchronize_between_processes()
+def evaluate(gt_dir, predictions_dir, max_distance=1000, num_bins=10, iou_thresh=0.5):
+    gt_images = gt_dir + "/images/"
+    gt_labels = gt_dir + "/labels/"
+    save_dir = os.path.join(predictions_dir, "..", "evaluation_results")
+    os.makedirs(save_dir, exist_ok=True)
 
-    # accumulate predictions from all images
-    if coco_evaluator is not None:
-        coco_evaluator.accumulate()
-        coco_evaluator.summarize()
-    stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    dist_pred_and_gt = []
+    head_pred_and_gt = []
+    dist_errors_plot = []
 
-    if coco_evaluator is not None:
-        results_json = coco_extended_metrics(coco_evaluator.coco_eval["bbox"])
-        stats["results_json"] = results_json
-        if "bbox" in postprocessors.keys():
-            stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
+    # bins setup
+    distance_bins = create_distance_bins(max_distance, num_bins)
 
-        if "segm" in postprocessors.keys():
-            stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
+    samples_per_bin = {interval: 0 for interval in distance_bins}
+    mean_abs_dist_err_boat_bins = {interval: [] for interval in distance_bins}
 
-    return stats, coco_evaluator
-"""
+    # prepare GT boxes
+    gt_data = []
+
+    for pred in sorted(os.listdir(predictions_dir)):
+        pred_file = os.path.join(predictions_dir, pred)
+        gt_img_file = os.path.join(gt_images, os.path.basename(pred).replace('.json', '.jpg'))
+        gt_label_file = os.path.join(gt_labels, os.path.basename(pred).replace('.json', '.txt'))
+        if not os.path.exists(gt_img_file) or not os.path.exists(gt_label_file):
+            print(f"GT file for {pred} not found. Skipping.")
+            continue
+        img_height, img_width = cv2.imread(gt_img_file).shape[:2]
+
+        with open(gt_label_file, 'r') as f:
+            gt = f.readlines()
+
+        with open(pred_file, 'r') as f:
+            predictions = json.load(f)
+        for line in gt:
+            parts = line.strip().split()
+            vals = list(map(float, parts))
+            box, dist, head = yolo_to_xyxy(vals, img_width, img_height)
+            gt_data.append({"bbox": box, "distance": dist, "heading": head, "used": False})
+
+        # match predictions
+        for pred in predictions:
+            pbox = pred["bbox"]  # already xyxy
+            pdist = pred["distance"]
+            phead = pred["heading"]
+
+            best_iou = 0
+            best_gt = None
+            for g in gt_data:
+                if g["used"]:
+                    continue
+                i = iou(pbox, g["bbox"])
+                if i > best_iou:
+                    best_iou = i
+                    best_gt = g
+
+            if best_gt is not None and best_iou >= iou_thresh:
+                best_gt["used"] = True
+
+                gdist, ghead = best_gt["distance"], best_gt["heading"]
+
+                # 1. speichern
+                if ghead != -1:  # heading vorhanden
+                    head_pred_and_gt.append((phead, ghead))
+
+                if gdist != -1:  # distance vorhanden
+                    dist_pred_and_gt.append((pdist, gdist))
+
+                    # 2. distance error plot
+                    dist_errors_plot.append((gdist, pdist - gdist))
+
+                    # 3+4. Bin stats
+                    for interval in distance_bins:
+                        low, high = interval
+                        if low <= gdist < high:
+                            samples_per_bin[interval] += 1
+                            mean_abs_dist_err_boat_bins[interval].append(abs(pdist - gdist))
+                            break
+
+    mean_abs_dist_err_boat_bins = {
+        interval: (np.mean(errors) if errors else 0.0)
+        for interval, errors in mean_abs_dist_err_boat_bins.items()
+    }
+
+    plot_dist_err(mean_abs_dist_err_boat_bins, num_samples=samples_per_bin, labelX='GT - Distance [m]',
+                  labelY=r'$\varepsilon$', path=os.path.join(save_dir, 'AbsoluteError.png'), color='red')
+    # TODO Pia: relative error plot
+    # plot raw dist errors
+    plot_errors(dist_errors_plot, bins=5, max_dist=distance_bins[-1][1],
+                path=os.path.join(save_dir, 'dist_errors.pdf'))
+    plot_dist_pred(dist_pred_and_gt, path=os.path.join(save_dir, 'dist_pred.pdf'))
+
+    # plot heading errors
+    plot_heading_pred(head_pred_and_gt, path=os.path.join(save_dir, 'head_pred.pdf'))
+    plot_heading_err(head_pred_and_gt, path=os.path.join(save_dir, 'head_err.pdf'))
+
+
 
 if __name__ == "__main__":
-    run_path = "../runs/train/DetDistHead_Freeze2/"
-    plot_training_logs(log_file_path= run_path + "log.txt", output_path=run_path+ "training_plot.png", use_ema=True)
+    #run_path = "../runs/train/DetDistHead_MLP/"
+    #plot_training_logs(log_file_path= run_path + "log.txt", output_path=run_path+ "training_plot.png", use_ema=True)
+    evaluate(
+        gt_dir="../../../data/BOArDING_Dataset/BOArDING/val",
+        predictions_dir="../runs/detect/DetDistHead_MLP/labels/",
+        max_distance=1000,
+        num_bins=10
+    )
