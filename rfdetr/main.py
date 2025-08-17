@@ -84,6 +84,7 @@ class Model:
             print("Loading pretrain weights")
             try:
                 checkpoint = torch.load(args.pretrain_weights, map_location='cpu', weights_only=False)
+                print(f"Pretrained weights loaded from {args.pretrain_weights}")
             except Exception as e:
                 print(f"Failed to load pretrain weights: {e}")
                 # re-download weights if they are corrupted
