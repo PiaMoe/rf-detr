@@ -218,7 +218,7 @@ def plot_heading_err(data, path):
     pred = data[:, 1]
 
     # Compute angular error
-    diff = np.abs(gt - pred)
+    diff = abs(gt - pred)
     angular_error = np.minimum(diff, 360 - diff)
 
     # Define bins (8 bins = 45° each)
@@ -275,7 +275,11 @@ def iou(boxA, boxB):
 
 def yolo_to_xyxy(label, img_w, img_h):
     # YOLO: class cx cy w h distance heading
-    cls, cx, cy, w, h, dist, head = label
+    cls, cx, cy, w, h, dist, cos, sin = label
+    if cos == 0 and sin == 0:
+        head = -1
+    else:
+        head = (np.atan2(sin, cos) * 180 / np.pi) % 360 # convert to degrees
     cx *= img_w
     cy *= img_h
     w *= img_w
@@ -306,15 +310,24 @@ def evaluate(gt_dir, predictions_dir, max_distance=1000, num_bins=10, iou_thresh
     dist_pred_and_gt = []
     head_pred_and_gt = []
     dist_errors_plot = []
+    head_pred_and_err = []
+    all_rel_dist_err = []
 
     # bins setup
     distance_bins = create_distance_bins(max_distance, num_bins)
-
     samples_per_bin = {interval: 0 for interval in distance_bins}
     mean_abs_dist_err_boat_bins = {interval: [] for interval in distance_bins}
+    mean_relative_dist_err_boat_bins = {interval: [] for interval in distance_bins}
 
     # prepare GT boxes
     gt_data = []
+
+    num_samples = 0
+    abs_mean_dist_err = 0.0
+    weighted_rel_dist_err = 0.0
+
+    correct_headings = 0
+    incorrect_headings = 0
 
     for pred in sorted(os.listdir(predictions_dir)):
         pred_file = os.path.join(predictions_dir, pred)
@@ -341,6 +354,7 @@ def evaluate(gt_dir, predictions_dir, max_distance=1000, num_bins=10, iou_thresh
             pbox = pred["bbox"]  # already xyxy
             pdist = pred["distance"]
             phead = pred["heading"]
+            conf = pred["confidence"]
 
             best_iou = 0
             best_gt = None
@@ -354,18 +368,27 @@ def evaluate(gt_dir, predictions_dir, max_distance=1000, num_bins=10, iou_thresh
 
             if best_gt is not None and best_iou >= iou_thresh:
                 best_gt["used"] = True
+                num_samples += 1
 
                 gdist, ghead = best_gt["distance"], best_gt["heading"]
 
                 # 1. speichern
                 if ghead != -1:  # heading vorhanden
                     head_pred_and_gt.append((phead, ghead))
+                    heading_err = min(abs(phead - ghead), 360 - abs(phead - ghead))
+                    head_pred_and_err.append((phead, heading_err))
+                    if heading_err < 30:
+                        correct_headings += 1
+                    else:
+                        incorrect_headings += 1
 
                 if gdist != -1:  # distance vorhanden
                     dist_pred_and_gt.append((pdist, gdist))
 
                     # 2. distance error plot
                     dist_errors_plot.append((gdist, pdist - gdist))
+                    weighted_rel_err = conf * abs(pdist - gdist) / gdist if gdist > 0 else 0.0
+                    all_rel_dist_err.append(weighted_rel_err)
 
                     # 3+4. Bin stats
                     for interval in distance_bins:
@@ -373,6 +396,7 @@ def evaluate(gt_dir, predictions_dir, max_distance=1000, num_bins=10, iou_thresh
                         if low <= gdist < high:
                             samples_per_bin[interval] += 1
                             mean_abs_dist_err_boat_bins[interval].append(abs(pdist - gdist))
+                            mean_relative_dist_err_boat_bins[interval].append(weighted_rel_err)
                             break
 
     mean_abs_dist_err_boat_bins = {
@@ -380,9 +404,22 @@ def evaluate(gt_dir, predictions_dir, max_distance=1000, num_bins=10, iou_thresh
         for interval, errors in mean_abs_dist_err_boat_bins.items()
     }
 
+    mean_relative_dist_err_boat_bins = {
+        interval: (np.mean(errors) if errors else 0.0)
+        for interval, errors in mean_relative_dist_err_boat_bins.items()
+    }
+
+    abs_mean_dist_err = np.mean([abs(pdist - gdist) for pdist, gdist in dist_pred_and_gt]) if dist_pred_and_gt else 0.0
+    weighted_rel_dist_err = np.mean(all_rel_dist_err) if all_rel_dist_err else 0.0
+
+    mean_heading_err = np.mean([err[1] for err in head_pred_and_err]) if head_pred_and_err else 0.0
+    heading_precision = correct_headings / (correct_headings + incorrect_headings) if (correct_headings + incorrect_headings) > 0 else 0.0
+
     plot_dist_err(mean_abs_dist_err_boat_bins, num_samples=samples_per_bin, labelX='GT - Distance [m]',
                   labelY=r'$\varepsilon$', path=os.path.join(save_dir, 'AbsoluteError.png'), color='red')
-    # TODO Pia: relative error plot
+    plot_dist_err(mean_relative_dist_err_boat_bins, num_samples=samples_per_bin, labelX='GT - Distance [m]',
+                  labelY=r'$\varepsilon_R$', path=os.path.join(save_dir, "RelativeError.png"))
+
     # plot raw dist errors
     plot_errors(dist_errors_plot, bins=5, max_dist=distance_bins[-1][1],
                 path=os.path.join(save_dir, 'dist_errors.pdf'))
@@ -392,14 +429,28 @@ def evaluate(gt_dir, predictions_dir, max_distance=1000, num_bins=10, iou_thresh
     plot_heading_pred(head_pred_and_gt, path=os.path.join(save_dir, 'head_pred.pdf'))
     plot_heading_err(head_pred_and_gt, path=os.path.join(save_dir, 'head_err.pdf'))
 
+    # save results that are not in plots
+    with open(save_dir + '/results.txt', 'w') as f:
+        f.write(f"\nTotal Samples: {num_samples}\n")
+        f.write(f"Overall weighted_rel_dist_err_boat = {weighted_rel_dist_err}\n")
+        f.write(f"\nOverall abs_mean_dist_err_boat = {abs_mean_dist_err}\n")
+        f.write("\nDistance bins:\n")
+        for bin_key in mean_abs_dist_err_boat_bins:
+            f.write(f"  Distance bin {bin_key}:\n")
+            f.write(f"    samples = {samples_per_bin[bin_key]}\n")
+            f.write(f"    weighted_rel_dist_err_boat = {mean_relative_dist_err_boat_bins[bin_key]:.3f}\n")
+            f.write(f"    abs_mean_dist_err_boat = {mean_abs_dist_err_boat_bins[bin_key]:.3f}\n")
+        f.write(f"\nMean heading error: {mean_heading_err:.1f} degrees\n")
+        f.write(f"Heading precision: {heading_precision:.3f}\n")
+        f.write(f"Correct headings: {correct_headings}, Incorrect headings: {incorrect_headings}\n")
 
 
 if __name__ == "__main__":
     #run_path = "../runs/train/DetDistHead_MLP/"
     #plot_training_logs(log_file_path= run_path + "log.txt", output_path=run_path+ "training_plot.png", use_ema=True)
     evaluate(
-        gt_dir="../../../data/BOArDING_Dataset/BOArDING/val",
-        predictions_dir="../runs/detect/DetDistHead_MLP/labels/",
+        gt_dir="../../../data/BOArDING_3/val",
+        predictions_dir="../runs/detect/B3_DetDistHead/val/labels/",
         max_distance=1000,
         num_bins=10
     )
