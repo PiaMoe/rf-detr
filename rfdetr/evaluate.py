@@ -10,6 +10,8 @@ from glob import glob
 import numpy as np
 from tueplots.constants.color import rgb
 from scipy.stats import gaussian_kde
+import pandas as pd
+import seaborn as sns
 
 
 def plot_training_logs(log_file_path: str, output_path: str = None, use_ema: bool = False):
@@ -254,8 +256,36 @@ def plot_heading_err(data, path):
     plt.savefig(path)
 
 
+def correlations(df, path):
+    """
+    Plots scatterplots with regression line for:
+    - confidence vs distance error
+    - confidence vs heading error
+    - distance error vs heading error
+    """
+    pairs = [
+        ("confidence", "distance error"),
+        ("confidence", "heading error"),
+        ("distance error", "heading error"),
+        ("confidence", "IoU"),
+        ("distance error", "IoU"),
+        ("heading error", "IoU")
+    ]
 
-import numpy as np
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    axes = axes.flatten()
+    for ax, (x, y) in zip(axes, pairs):
+        # scatter + regression line
+        sns.regplot(x=x, y=y, data=df, ax=ax,
+                    scatter_kws={"marker": 'o', "alpha": 0.6, "s": 9},
+                    line_kws={"color": rgb.tue_red})
+        ax.set_title(f"{x} vs {y}")
+        ax.set_xlabel(x)
+        ax.set_ylabel(y)
+
+    plt.tight_layout()
+    plt.savefig(path)
+
 
 def iou(boxA, boxB):
     # box: [x1, y1, x2, y2]
@@ -302,95 +332,81 @@ def create_distance_bins(max_distance, number_bins):
 
 
 def evaluate(gt_dir, predictions_dir, max_distance=1000, num_bins=10, iou_thresh=0.5):
-    gt_images = gt_dir + "/images/"
-    gt_labels = gt_dir + "/labels/"
+    # --- Setup ---
+    gt_images = os.path.join(gt_dir, "images")
+    gt_labels = os.path.join(gt_dir, "labels")
     save_dir = os.path.join(predictions_dir, "..", "evaluation_results")
     os.makedirs(save_dir, exist_ok=True)
 
-    dist_pred_and_gt = []
-    head_pred_and_gt = []
-    dist_errors_plot = []
-    head_pred_and_err = []
+    # Speicherstrukturen
+    dist_pred_and_gt, head_pred_and_gt = [], []
+    dist_errors_plot, head_pred_and_err = [], []
     all_rel_dist_err = []
+    records = []
 
-    # bins setup
+    # Distance Bins vorbereiten
     distance_bins = create_distance_bins(max_distance, num_bins)
     samples_per_bin = {interval: 0 for interval in distance_bins}
     mean_abs_dist_err_boat_bins = {interval: [] for interval in distance_bins}
     mean_relative_dist_err_boat_bins = {interval: [] for interval in distance_bins}
 
-    # prepare GT boxes
-    gt_data = []
-
+    # Statistiken
     num_samples = 0
-    abs_mean_dist_err = 0.0
-    weighted_rel_dist_err = 0.0
+    correct_headings, incorrect_headings = 0, 0
 
-    correct_headings = 0
-    incorrect_headings = 0
+    # --- Iterate over predictions ---
+    for pred_file_name in sorted(os.listdir(predictions_dir)):
+        pred_file = os.path.join(predictions_dir, pred_file_name)
+        gt_img_file = os.path.join(gt_images, pred_file_name.replace('.json', '.jpg'))
+        gt_label_file = os.path.join(gt_labels, pred_file_name.replace('.json', '.txt'))
 
-    for pred in sorted(os.listdir(predictions_dir)):
-        pred_file = os.path.join(predictions_dir, pred)
-        gt_img_file = os.path.join(gt_images, os.path.basename(pred).replace('.json', '.jpg'))
-        gt_label_file = os.path.join(gt_labels, os.path.basename(pred).replace('.json', '.txt'))
         if not os.path.exists(gt_img_file) or not os.path.exists(gt_label_file):
-            print(f"GT file for {pred} not found. Skipping.")
+            print(f"GT file for {pred_file_name} not found. Skipping.")
             continue
+
+        # GT-Daten laden
         img_height, img_width = cv2.imread(gt_img_file).shape[:2]
+        with open(gt_label_file, 'r') as f: gt = f.readlines()
+        with open(pred_file, 'r') as f: predictions = json.load(f)
 
-        with open(gt_label_file, 'r') as f:
-            gt = f.readlines()
-
-        with open(pred_file, 'r') as f:
-            predictions = json.load(f)
+        gt_data = []
         for line in gt:
-            parts = line.strip().split()
-            vals = list(map(float, parts))
+            vals = list(map(float, line.strip().split()))
             box, dist, head = yolo_to_xyxy(vals, img_width, img_height)
             gt_data.append({"bbox": box, "distance": dist, "heading": head, "used": False})
 
-        # match predictions
+        # --- Match Predictions to GT ---
         for pred in predictions:
-            pbox = pred["bbox"]  # already xyxy
-            pdist = pred["distance"]
-            phead = pred["heading"]
-            conf = pred["confidence"]
+            pbox, pdist, phead, conf = pred["bbox"], pred["distance"], pred["heading"], pred["confidence"]
 
-            best_iou = 0
-            best_gt = None
+            # Bester Match (IoU)
+            best_iou, best_gt = 0, None
             for g in gt_data:
-                if g["used"]:
-                    continue
+                if g["used"]: continue
                 i = iou(pbox, g["bbox"])
-                if i > best_iou:
-                    best_iou = i
-                    best_gt = g
+                if i > best_iou: best_iou, best_gt = i, g
 
             if best_gt is not None and best_iou >= iou_thresh:
                 best_gt["used"] = True
                 num_samples += 1
-
                 gdist, ghead = best_gt["distance"], best_gt["heading"]
 
-                # 1. speichern
-                if ghead != -1:  # heading vorhanden
+                # --- Heading Fehler ---
+                if ghead != -1:
                     head_pred_and_gt.append((phead, ghead))
                     heading_err = min(abs(phead - ghead), 360 - abs(phead - ghead))
                     head_pred_and_err.append((phead, heading_err))
-                    if heading_err < 30:
-                        correct_headings += 1
-                    else:
-                        incorrect_headings += 1
+                    if heading_err < 30: correct_headings += 1
+                    else: incorrect_headings += 1
 
-                if gdist != -1:  # distance vorhanden
+                # --- Distance Fehler ---
+                if gdist != -1:
                     dist_pred_and_gt.append((pdist, gdist))
-
-                    # 2. distance error plot
                     dist_errors_plot.append((gdist, pdist - gdist))
+
                     weighted_rel_err = conf * abs(pdist - gdist) / gdist if gdist > 0 else 0.0
                     all_rel_dist_err.append(weighted_rel_err)
 
-                    # 3+4. Bin stats
                     for interval in distance_bins:
                         low, high = interval
                         if low <= gdist < high:
@@ -399,38 +415,41 @@ def evaluate(gt_dir, predictions_dir, max_distance=1000, num_bins=10, iou_thresh
                             mean_relative_dist_err_boat_bins[interval].append(weighted_rel_err)
                             break
 
-    mean_abs_dist_err_boat_bins = {
-        interval: (np.mean(errors) if errors else 0.0)
-        for interval, errors in mean_abs_dist_err_boat_bins.items()
-    }
+                if gdist != -1 and ghead != -1:
+                    records.append({
+                        "confidence": conf,
+                        "distance error": abs(pdist - gdist),
+                        "heading error": min(abs(phead - ghead), 360 - abs(phead - ghead)),
+                        "IoU": best_iou
+                    })
 
-    mean_relative_dist_err_boat_bins = {
-        interval: (np.mean(errors) if errors else 0.0)
-        for interval, errors in mean_relative_dist_err_boat_bins.items()
-    }
+    # --- Statistiken aggregieren ---
+    mean_abs_dist_err_boat_bins = {k: (np.mean(v) if v else 0.0) for k, v in mean_abs_dist_err_boat_bins.items()}
+    mean_relative_dist_err_boat_bins = {k: (np.mean(v) if v else 0.0) for k, v in mean_relative_dist_err_boat_bins.items()}
 
-    abs_mean_dist_err = np.mean([abs(pdist - gdist) for pdist, gdist in dist_pred_and_gt]) if dist_pred_and_gt else 0.0
+    abs_mean_dist_err = np.mean([abs(p - g) for p, g in dist_pred_and_gt]) if dist_pred_and_gt else 0.0
     weighted_rel_dist_err = np.mean(all_rel_dist_err) if all_rel_dist_err else 0.0
-
-    mean_heading_err = np.mean([err[1] for err in head_pred_and_err]) if head_pred_and_err else 0.0
+    mean_heading_err = np.mean([err for _, err in head_pred_and_err]) if head_pred_and_err else 0.0
     heading_precision = correct_headings / (correct_headings + incorrect_headings) if (correct_headings + incorrect_headings) > 0 else 0.0
 
+    # --- Plots ---
     plot_dist_err(mean_abs_dist_err_boat_bins, num_samples=samples_per_bin, labelX='GT - Distance [m]',
                   labelY=r'$\varepsilon$', path=os.path.join(save_dir, 'AbsoluteError.png'), color='red')
     plot_dist_err(mean_relative_dist_err_boat_bins, num_samples=samples_per_bin, labelX='GT - Distance [m]',
                   labelY=r'$\varepsilon_R$', path=os.path.join(save_dir, "RelativeError.png"))
-
-    # plot raw dist errors
     plot_errors(dist_errors_plot, bins=5, max_dist=distance_bins[-1][1],
                 path=os.path.join(save_dir, 'dist_errors.pdf'))
     plot_dist_pred(dist_pred_and_gt, path=os.path.join(save_dir, 'dist_pred.pdf'))
-
-    # plot heading errors
     plot_heading_pred(head_pred_and_gt, path=os.path.join(save_dir, 'head_pred.pdf'))
     plot_heading_err(head_pred_and_gt, path=os.path.join(save_dir, 'head_err.pdf'))
 
-    # save results that are not in plots
-    with open(save_dir + '/results.txt', 'w') as f:
+    # --- Correlation DF ---in head_pred_and_err]
+    corr_df = pd.DataFrame(records).dropna().corr()
+    correlations(pd.DataFrame(records).dropna(), path=os.path.join(save_dir, 'correlations.png'))
+
+
+    # --- Save Results ---
+    with open(os.path.join(save_dir, 'results.txt'), 'w') as f:
         f.write(f"\nTotal Samples: {num_samples}\n")
         f.write(f"Overall weighted_rel_dist_err_boat = {weighted_rel_dist_err}\n")
         f.write(f"\nOverall abs_mean_dist_err_boat = {abs_mean_dist_err}\n")
@@ -443,6 +462,10 @@ def evaluate(gt_dir, predictions_dir, max_distance=1000, num_bins=10, iou_thresh
         f.write(f"\nMean heading error: {mean_heading_err:.1f} degrees\n")
         f.write(f"Heading precision: {heading_precision:.3f}\n")
         f.write(f"Correct headings: {correct_headings}, Incorrect headings: {incorrect_headings}\n")
+        f.write("\nCorrelation Matrix (confidence, dist_error, heading_error):\n")
+        f.write(str(corr_df))
+
+    return corr_df
 
 
 if __name__ == "__main__":
