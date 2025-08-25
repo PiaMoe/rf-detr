@@ -25,14 +25,14 @@ class ModelConfig(BaseModel):
     layer_norm: bool = True
     amp: bool = True
     num_classes: int = 90
-    pretrain_weights: Optional[str] = "best_det.pth"
+    pretrain_weights: Optional[str] = None
     device: Literal["cpu", "cuda", "mps"] = DEVICE
-    resolution: int = 560
+    resolution: int = 1024
     group_detr: int = 13
     gradient_checkpointing: bool = False
     max_distance: float = 1000.0
     aux_loss: bool = False
-    freeze_encoder: bool = True
+    freeze_encoder: bool = False
     # TODO PIA: try different values for dist loss und head loss coefficients
 
 class RFDETRBaseConfig(ModelConfig):

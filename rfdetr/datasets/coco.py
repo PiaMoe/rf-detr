@@ -116,7 +116,6 @@ class ConvertCoco(object):
 
 
 def make_coco_transforms(image_set, resolution, multi_scale=False, expanded_scales=False):
-
     normalize = T.Compose([
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -165,7 +164,6 @@ def make_coco_transforms_square_div_64(image_set, resolution, multi_scale=False,
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
 
-
     scales = [resolution]
     if multi_scale:
         # scales = [448, 512, 576, 640, 704, 768, 832, 896]
@@ -204,34 +202,40 @@ def make_coco_transforms_square_div_64(image_set, resolution, multi_scale=False,
 
     raise ValueError(f'unknown {image_set}')
 
+
 def build(image_set, args, resolution):
     root = Path(args.coco_path)
     assert root.exists(), f'provided COCO path {root} does not exist'
     mode = 'instances'
     PATHS = {
         "train": (root / "train2017", root / "annotations" / f'{mode}_train2017.json'),
-        "val": (root /  "val2017", root / "annotations" / f'{mode}_val2017.json'),
+        "val": (root / "val2017", root / "annotations" / f'{mode}_val2017.json'),
         "test": (root / "test2017", root / "annotations" / f'image_info_test-dev2017.json'),
     }
-    
+
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
-    
+
     try:
         square_resize = args.square_resize
     except:
         square_resize = False
-    
+
     try:
         square_resize_div_64 = args.square_resize_div_64
     except:
         square_resize_div_64 = False
 
-    
     if square_resize_div_64:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales))
+        dataset = CocoDetection(img_folder, ann_file,
+                                transforms=make_coco_transforms_square_div_64(image_set, resolution,
+                                                                              multi_scale=args.multi_scale,
+                                                                              expanded_scales=args.expanded_scales))
     else:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales))
+        dataset = CocoDetection(img_folder, ann_file,
+                                transforms=make_coco_transforms(image_set, resolution, multi_scale=args.multi_scale,
+                                                                expanded_scales=args.expanded_scales))
     return dataset
+
 
 def build_roboflow(image_set, args, resolution):
     root = Path(args.dataset_dir)
@@ -239,25 +243,27 @@ def build_roboflow(image_set, args, resolution):
     mode = 'instances'
     PATHS = {
         "train": (root / "train" / "images", root / "train" / "train.json"),
-        "val": (root /  "val" / "images", root / "val" / "val.json"),
-        "test": (root / "test" / "images", root / "test" / "test.json"),
+        "val": (root / "val" / "images", root / "val" / "val.json"),
+        "test": (root / "val" / "images", root / "val" / "val.json"),
     }
-    
+
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
-    
+
     try:
         square_resize = args.square_resize
     except:
         square_resize = False
-    
+
     try:
         square_resize_div_64 = args.square_resize_div_64
     except:
         square_resize_div_64 = False
 
-    
     if square_resize_div_64:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(image_set, resolution, multi_scale=args.multi_scale))
+        dataset = CocoDetection(img_folder, ann_file,
+                                transforms=make_coco_transforms_square_div_64(image_set, resolution,
+                                                                              multi_scale=args.multi_scale))
     else:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(image_set, resolution, multi_scale=args.multi_scale))
+        dataset = CocoDetection(img_folder, ann_file,
+                                transforms=make_coco_transforms(image_set, resolution, multi_scale=args.multi_scale))
     return dataset

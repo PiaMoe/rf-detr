@@ -13,6 +13,16 @@ def time_synchronized():
         torch.cuda.synchronize()
     return time.time()
 
+def get_color_based_on_distance(distance):
+    if distance <= 50:
+        return (0, 0, 255)  # Red in BGR
+    elif 50 < distance <= 150:
+        return (0, 165, 255)  # Orange in BGR
+    elif 150 < distance <= 300:
+        return (0, 250, 250)  # Yellow in BGR
+    else:
+        return (255, 0, 0)  # Blue in BGR
+
 def get_class_color_with_distance(cls_name, distance):
     base_colors = {
         'boat': (0, 100, 0),   # BGR
@@ -32,7 +42,7 @@ def annotate_image_cv2(image, detections, classes):
         dist = det["distance"]
         head = det["heading"]
 
-        color = get_class_color_with_distance(class_name, dist)
+        color = get_color_based_on_distance(dist)
         label = f"{class_name} {conf:.2f} {dist:.1f}m {head:.1f}deg"
 
         # Box zeichnen
@@ -150,8 +160,8 @@ def inference(run_name, data_path, weights_path, classes):
 
 
 if __name__ == "__main__":
-    run_name = "DetDistHeadFreezeMLP"
-    data_path = "../../../data/BOArDING_Dataset/BOArDING_Det/val/images"
-    weights_path = "../runs/train/DetDistHead_Freeze/checkpoint_best_total.pth"
+    run_name = "B3_DetDistHead_9e"
+    data_path = "../../../data/BOArDING_3/Det/val/images"
+    weights_path = "../runs/train/BOArDING3_DetDistHead/checkpoint0009.pth"
     classes = ['boat', 'buoy']
     inference(run_name, data_path, weights_path, classes)
