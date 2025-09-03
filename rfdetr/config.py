@@ -24,7 +24,7 @@ class ModelConfig(BaseModel):
     lite_refpoint_refine: bool = True
     layer_norm: bool = True
     amp: bool = True
-    num_classes: int = 90
+    num_classes: int = 1
     pretrain_weights: Optional[str] = "rfdetr/best_det.pth"
     device: Literal["cpu", "cuda", "mps"] = DEVICE
     resolution: int = 560
@@ -32,8 +32,7 @@ class ModelConfig(BaseModel):
     gradient_checkpointing: bool = False
     max_distance: float = 1000.0
     aux_loss: bool = False
-    freeze_encoder: bool = False
-    # TODO PIA: try different values for dist loss und head loss coefficients
+    freeze_encoder: bool = True
 
 class RFDETRBaseConfig(ModelConfig):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_small"
@@ -72,7 +71,11 @@ class TrainConfig(BaseModel):
     drop_path: float = 0.0
     group_detr: int = 13
     ia_bce_loss: bool = True
-    cls_loss_coef: float = 1.0
+    cls_loss_coef: float = 3
+    bbox_loss_coef: float = 7
+    giou_loss_coef: float = 3
+    dist_loss_coef: float = 1
+    head_loss_coef: float = 1
     num_select: int = 300
     dataset_file: Literal["coco", "o365", "roboflow"] = "roboflow"
     square_resize_div_64: bool = True
