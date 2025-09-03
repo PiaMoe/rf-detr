@@ -25,9 +25,9 @@ class ModelConfig(BaseModel):
     layer_norm: bool = True
     amp: bool = True
     num_classes: int = 90
-    pretrain_weights: Optional[str] = None
+    pretrain_weights: Optional[str] = "rfdetr/best_det.pth"
     device: Literal["cpu", "cuda", "mps"] = DEVICE
-    resolution: int = 1024
+    resolution: int = 560
     group_detr: int = 13
     gradient_checkpointing: bool = False
     max_distance: float = 1000.0
@@ -45,7 +45,7 @@ class RFDETRBaseConfig(ModelConfig):
     num_select: int = 300
     projector_scale: List[Literal["P3", "P4", "P5"]] = ["P4"]
     out_feature_indexes: List[int] = [2, 5, 8, 11]
-    pretrain_weights: Optional[str] = "best_det.pth"
+    pretrain_weights: Optional[str] = "rfdetr/best_det.pth"
 
 class RFDETRLargeConfig(RFDETRBaseConfig):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_base"
