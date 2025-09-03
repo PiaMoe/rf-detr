@@ -393,7 +393,7 @@ def evaluate(gt_dir, predictions_dir, max_distance=1000, num_bins=10, iou_thresh
 
                 # --- Heading Fehler ---
                 if ghead != -1:
-                    head_pred_and_gt.append((phead, ghead))
+                    head_pred_and_gt.append((ghead, phead))
                     heading_err = min(abs(phead - ghead), 360 - abs(phead - ghead))
                     head_pred_and_err.append((phead, heading_err))
                     if heading_err < 30: correct_headings += 1
@@ -401,7 +401,7 @@ def evaluate(gt_dir, predictions_dir, max_distance=1000, num_bins=10, iou_thresh
 
                 # --- Distance Fehler ---
                 if gdist != -1:
-                    dist_pred_and_gt.append((pdist, gdist))
+                    dist_pred_and_gt.append((gdist, pdist))
                     dist_errors_plot.append((gdist, pdist - gdist))
 
                     weighted_rel_err = conf * abs(pdist - gdist) / gdist if gdist > 0 else 0.0
@@ -473,7 +473,7 @@ if __name__ == "__main__":
     #plot_training_logs(log_file_path= run_path + "log.txt", output_path=run_path+ "training_plot.png", use_ema=True)
     evaluate(
         gt_dir="../../../data/BOArDING_3/val",
-        predictions_dir="../runs/detect/B3_DetDistHead/val/labels/",
+        predictions_dir="../runs/detect/B3_DetDistHead_focusDet/val/labels/",
         max_distance=1000,
         num_bins=10
     )
