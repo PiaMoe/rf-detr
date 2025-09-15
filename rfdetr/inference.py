@@ -28,7 +28,8 @@ def annotate_image_cv2(image, detections, classes):
         class_name = classes[class_id]
         conf = det["confidence"]
 
-        color = get_class_color(class_name)
+        #color = get_class_color(class_name)
+        color = [50, 205, 50]
         label = f"{class_name} {conf:.2f}"
 
         # Box zeichnen
@@ -46,7 +47,7 @@ def annotate_image_cv2(image, detections, classes):
         cv2.rectangle(image, (text_x, text_y - text_h), (text_x + text_w, text_y), color, -1)
 
         # Text
-        text_color = (255, 255, 255)
+        text_color = (0, 0, 0)
         cv2.putText(image, label, (text_x, text_y - 2), font, font_scale, text_color, thickness, cv2.LINE_AA)
     return image
 
@@ -99,6 +100,7 @@ def inference(run_name, data_path, weights_path, classes):
         os.makedirs(output_img_path, exist_ok=True)
         os.makedirs(output_label_path, exist_ok=True)
         image_paths = sorted(glob(os.path.join(data_path, "*.jpg")) + glob(os.path.join(data_path, "*.png")))
+        infer_times = []
 
         for i, path in enumerate(image_paths):
             img_name = os.path.basename(path)
@@ -109,6 +111,7 @@ def inference(run_name, data_path, weights_path, classes):
             start = time_synchronized()
             detections = model.predict(image, threshold=0.25)
             infer_time = time_synchronized() - start
+            infer_times.append(infer_time)
             print(f"image {i + 1}/{len(image_paths)} ({img_name}): inference time = {infer_time:.3f}s")
 
             if not detections:
@@ -128,11 +131,16 @@ def inference(run_name, data_path, weights_path, classes):
             ]
             with open(save_label, "w") as f:
                 json.dump(detection_data, f, indent=2)
+        if infer_times:
+            avg_infer_time = sum(infer_times) / len(infer_times)
+            print(f"\nAverage inference time per image: {avg_infer_time:.3f}s")
+            print(f"FPS: {1.0 / avg_infer_time:.2f}")
 
 
 if __name__ == "__main__":
-    run_name = "DetOnly_Amalfi2"
-    data_path = "../../../data/BOArDING_Dataset/testVideos/AmalfiCoastClips.mp4"
-    weights_path = "../runs/train/BOArDING_Det/checkpoint_best_total.pth"
+    run_name = "B3_Det_test"
+    #data_path = "/media/pmoessner/INTENSO/MA/Beispielbilder/test/images/"
+    data_path = "../../../data/BOArDING_Dataset/BOArDING_Det/test/images"
+    weights_path = "../runs/train/B3_Det/checkpoint_best_total.pth"
     classes = ['boat', 'buoy']
     inference(run_name, data_path, weights_path, classes)

@@ -1,8 +1,13 @@
 import json
 from runpy import run_path
-
+from pathlib import Path
+import os
 import matplotlib.pyplot as plt
 from collections import defaultdict
+
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
+
 
 def plot_training_logs(log_file_path: str, output_path: str = None, use_ema: bool = False):
     epoch_logs = defaultdict(list)
@@ -82,9 +87,67 @@ def plot_training_logs(log_file_path: str, output_path: str = None, use_ema: boo
         plt.show()
 
 
+def predictions_to_coco(pred_dir, gt_file):
+    out_file = pred_dir / "predictions.json"
 
+    cocoGt = COCO(gt_file)
+
+    # Mapping file_name -> image_id
+    file_to_id = {img["file_name"]: img["id"] for img in cocoGt.dataset["images"]}
+    class_map = {
+        "boat": 0
+    }
+
+    coco_preds = []
+
+    for pred_file in pred_dir.glob("*.json"):
+        with open(pred_file, "r") as f:
+            preds = json.load(f)
+
+        if isinstance(preds, dict):
+            preds = [preds]
+
+        # image_id from file_name
+        file_name = pred_file.name
+        file_name = file_name.rsplit(".", 1)[0] + ".jpg"  # .json -> .jpg
+        if file_name not in file_to_id:
+            print(f"⚠️ Kein Mapping für {file_name} gefunden – überspringe.")
+            continue
+        image_id = file_to_id[file_name]
+
+        for p in preds:
+            x1, y1, x2, y2 = p["bbox"]
+            w, h = x2 - x1, y2 - y1
+            coco_preds.append({
+                "image_id": image_id,
+                "file_name": file_name,
+                "category_id": class_map[p["class_name"]],
+                "bbox": [x1, y1, w, h],
+                "score": float(p["confidence"])
+            })
+
+    # all predictions in one file
+    with open(out_file, "w") as f:
+        json.dump(coco_preds, f)
+
+    print(f"COCO predictions saved in {out_file}, {len(coco_preds)} detections over all.")
+
+def evaluate_det(gt, pred):
+
+    cocoGt = COCO(gt)
+    cocoDt = cocoGt.loadRes(pred)
+
+    cocoEval = COCOeval(cocoGt, cocoDt, "bbox")
+    cocoEval.evaluate()
+    cocoEval.accumulate()
+    cocoEval.summarize()
 
 
 if __name__ == "__main__":
-    run_path = "../runs/train/BOArDING_Det/"
-    plot_training_logs(log_file_path= run_path + "log.txt", output_path=run_path+ "training_plot.png", use_ema=True)
+    #run_path = "../runs/train/BOArDING_Det/"
+    #plot_training_logs(log_file_path= run_path + "log.txt", output_path=run_path+ "training_plot.png", use_ema=True)
+    pred_dir = Path("../runs/detect/B3_Det/labels")
+    gt_path = "../../../data/BOArDING_3/Det/val/val.json"
+    predictions_to_coco(pred_dir, gt_path)
+    evaluate_det(gt_path, str(pred_dir) + "/predictions.json")
+
